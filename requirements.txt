@@ -3,3 +3,4 @@ uvicorn==0.34.0
 pydantic==2.10.6
 pydantic_core==2.27.2
 PyMuPDF==1.25.5
+python-multipart==0.0.20
