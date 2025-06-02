@@ -4,3 +4,4 @@ pydantic==2.10.6
 pydantic_core==2.27.2
 PyMuPDF==1.25.5
 python-multipart==0.0.20
+google-genai==latest
