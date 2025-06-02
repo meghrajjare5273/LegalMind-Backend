@@ -154,7 +154,7 @@ class ContractAnalyzer:
     def _initialize_contract_patterns(self) -> Dict[str, str]:
         """Initialize regex patterns for contract element extraction."""
         return {
-            "dates": r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+\d{1,2},?\s+\d{4}|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}',
+            "dates": r'\b(?:January|February|March|April|May|June|July|August|September|October|November|December)\s+(?:\d{1,2}(?:st|nd|rd|th)?),?\s+\d{4}|\b(?:0?[1-9]|1[0-2])[/-](?:0?[1-9]|[12]\d|3[01])[/-](?:\d{4}|\d{2})\b',
             "money": r'\$[\d,]+(?:\.\d{2})?|\b\d+\s*(?:dollars?|USD|million|billion)',
             "parties": r'(?:between|among)\s+(.*?)\s+(?:and|&)',
             "governing_law": r'governed by.*?laws?\s+of\s+(.*?)(?:\.|,|;)',
@@ -291,7 +291,14 @@ class ContractAnalyzer:
             matches = re.findall(pattern, text, re.IGNORECASE)
             parties.extend(matches)
         
-        return list(set(parties))[:5]  # Limit to 5 parties
+        unique_parties = list(set(parties))
+        if len(unique_parties) > 5:
+            return {
+                "parties": unique_parties[:5],
+                "truncated": True,
+                "total_count": len(unique_parties)
+            }
+        return {"parties": unique_parties, "truncated": False}
     
     def _extract_dates(self, text: str) -> List[Dict[str, str]]:
         """Extract critical dates from contract."""
