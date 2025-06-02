@@ -45,10 +45,23 @@ class RiskAnalysis(BaseModel):
 class ContractAnalyzer:
     def __init__(self):
         self.cache = TTLCache(maxsize=1000, ttl=3600)  # Cache for 1 hour
-        # Simple risk keywords for local analysis (expand as needed)
+        # Expanded risk keywords for local analysis
         self.risk_keywords = {
             "liability": ("Liability", "High", ["Unlimited liability could lead to significant financial loss"]),
-            "termination": ("Termination", "Medium", ["Abrupt termination could disrupt operations"])
+            "termination": ("Termination", "Medium", ["Abrupt termination could disrupt operations"]),
+            "indemnification": ("Indemnification", "High", ["Broad indemnification may expose parties to unforeseen liabilities"]),
+            "warranties": ("Warranties", "Medium", ["Unclear or broad warranties may increase risk of breach claims"]),
+            "intellectual property": ("Intellectual Property", "High", ["IP clauses may result in loss of ownership or usage rights"]),
+            "confidentiality": ("Confidentiality", "Medium", ["Weak confidentiality terms may lead to data leaks or reputational harm"]),
+            "payment terms": ("Payment Terms", "Medium", ["Unfavorable payment terms can impact cash flow and financial planning"]),
+            "force majeure": ("Force Majeure", "Low", ["Lack of force majeure provisions may increase exposure to uncontrollable events"]),
+            "governing law": ("Governing Law", "Low", ["Unfavorable jurisdiction may complicate dispute resolution"]),
+            "dispute resolution": ("Dispute Resolution", "Medium", ["Unclear dispute resolution process may lead to costly litigation"]),
+            "assignment": ("Assignment", "Medium", ["Assignment clauses may allow unwanted transfer of obligations"]),
+            "limitation of liability": ("Limitation of Liability", "High", ["Absence of liability caps may result in excessive damages"]),
+            "exclusivity": ("Exclusivity", "Medium", ["Exclusive agreements may restrict future business opportunities"]),
+            "non-compete": ("Non-Compete", "Medium", ["Non-compete clauses may limit future employment or business options"]),
+            "audit": ("Audit", "Low", ["Audit rights may lead to privacy or operational concerns"])
         }
 
     def _split_into_sentences(self, text: str) -> List[str]:
@@ -102,7 +115,7 @@ class ContractAnalyzer:
 
         # Check cache for each risk
         for risk in risk_data:
-            cache_key = f"{risk['sentence']}_{risk['risk_category']}"
+            cache_key = f"{risk['sentence_index']}_{risk['sentence']}_{risk['risk_category']}"
             if cache_key in self.cache:
                 cached_results[cache_key] = self.cache[cache_key]
             else:
@@ -135,7 +148,16 @@ class ContractAnalyzer:
             self.cache[cache_key] = risk
 
         # Combine cached and newly fetched results
-        return [cached_results.get(f"{r['sentence']}_{r['risk_category']}") or uncached_risks.pop(0) for r in risk_data]
+        result = []
+        uncached_index = 0
+        for r in risk_data:
+            cache_key = f"{r['sentence']}_{r['risk_category']}"
+            if cache_key in cached_results:
+                result.append(cached_results[cache_key])
+            else:
+                result.append(uncached_risks[uncached_index])
+                uncached_index += 1
+        return result
 
 
 
