@@ -1,291 +1,490 @@
-import re
 import os
-# import httpx
+import asyncio
+import json
+import hashlib
+import logging
+from typing import List, Dict, Optional
+
+from cachetools import TTLCache
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from pdf_utils.pdf_functions import extract_text_from_pdf
-from typing import List, Dict, Optional
-import logging
-from cachetools import TTLCache
-# import asyncio
-# from typing import List, Dict
-import json
-from google import genai
 
+from pdf_utils.pdf_functions import extract_text_from_pdf
+from contracts.contract_analyzer import LightweightContractAnalyzer
+from google.genai import types
+
+# --------------------------------------------------------------------------- #
+# Google Gemini setup
+# --------------------------------------------------------------------------- #
+try:
+    from google import genai
+    GEMINI_AVAILABLE = True
+except ImportError:
+    GEMINI_AVAILABLE = False
+    logging.warning("Google Gemini SDK not installed – running without LLM boosts")
+
+# --------------------------------------------------------------------------- #
+# Logging
+# --------------------------------------------------------------------------- #
+logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# --------------------------------------------------------------------------- #
+# FastAPI initialisation
+# --------------------------------------------------------------------------- #
 app = FastAPI(
     title="LegalMind Backend API",
-    description="API for LegalMind an AI Application",
-    version="1.0.0"
+    description="AI-Powered Legal Contract Analysis (Serverless-Optimised)",
+    version="3.1.0",
 )
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://127.0.0.1:3000", "http://localhost:3001", "https://legal-mind-eight.vercel.app"],
+    allow_origins=[
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:3001",
+        "https://legal-mind-eight.vercel.app",
+    ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-class RiskAnalysis(BaseModel):
+# --------------------------------------------------------------------------- #
+# Pydantic models used by the API
+# --------------------------------------------------------------------------- #
+class EnhancedRiskAnalysis(BaseModel):
     sentence: str
     risk_category: str
     risk_level: str
-    specific_risk: str
-    explanation: str
-    negotiation_tip: str
-    potential_consequences: List[str]
+    risk_type: str
+    description: str
+    specific_concerns: List[str]
     negotiation_strategies: List[str]
-    red_flags: List[str]
-    sentence_index: int
-    section_context: Optional[str] = None
-
-class ContractAnalyzer:
-    def __init__(self):
-        self.cache = TTLCache(maxsize=1000, ttl=3600)  # Cache for 1 hour
-        # Expanded risk keywords for local analysis
-        self.risk_keywords = {
-            "liability": ("Liability", "High", ["Unlimited liability could lead to significant financial loss"]),
-            "termination": ("Termination", "Medium", ["Abrupt termination could disrupt operations"]),
-            "indemnification": ("Indemnification", "High", ["Broad indemnification may expose parties to unforeseen liabilities"]),
-            "warranties": ("Warranties", "Medium", ["Unclear or broad warranties may increase risk of breach claims"]),
-            "intellectual property": ("Intellectual Property", "High", ["IP clauses may result in loss of ownership or usage rights"]),
-            "confidentiality": ("Confidentiality", "Medium", ["Weak confidentiality terms may lead to data leaks or reputational harm"]),
-            "payment terms": ("Payment Terms", "Medium", ["Unfavorable payment terms can impact cash flow and financial planning"]),
-            "force majeure": ("Force Majeure", "Low", ["Lack of force majeure provisions may increase exposure to uncontrollable events"]),
-            "governing law": ("Governing Law", "Low", ["Unfavorable jurisdiction may complicate dispute resolution"]),
-            "dispute resolution": ("Dispute Resolution", "Medium", ["Unclear dispute resolution process may lead to costly litigation"]),
-            "assignment": ("Assignment", "Medium", ["Assignment clauses may allow unwanted transfer of obligations"]),
-            "limitation of liability": ("Limitation of Liability", "High", ["Absence of liability caps may result in excessive damages"]),
-            "exclusivity": ("Exclusivity", "Medium", ["Exclusive agreements may restrict future business opportunities"]),
-            "non-compete": ("Non-Compete", "Medium", ["Non-compete clauses may limit future employment or business options"]),
-            "audit": ("Audit", "Low", ["Audit rights may lead to privacy or operational concerns"])
-        }
-
-    def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences."""
-        return re.split(r'(?<=[.!?])\s+', text.strip())
-
-    def _analyze_sentence_locally(self, sentence: str, index: int) -> List[Dict]:
-        """Perform basic local risk analysis on a sentence."""
-        risks = []
-        sentence_lower = sentence.lower()
-        for keyword, (category, level, consequences) in self.risk_keywords.items():
-            if keyword in sentence_lower:
-                risks.append({
-                    "sentence": sentence,
-                    "risk_category": category,
-                    "risk_level": level,
-                    "specific_risk": f"Potential {keyword} issue",
-                    "explanation": f"This sentence mentions '{keyword}', indicating a potential {category.lower()} risk.",
-                    "negotiation_tip": f"Consider negotiating the terms related to {keyword}.",
-                    "potential_consequences": consequences,
-                    "negotiation_strategies": [f"Propose a cap on {keyword} exposure"],
-                    "red_flags": [f"Check for {keyword} clauses"],
-                    "sentence_index": index,
-                    "section_context": None
-                })
-        return risks
-
-    async def analyze_contract_risks(self, text: str) -> List[Dict]:
-        """Analyze contract text for risks, enhancing with Gemini API."""
-        risks = []
-        sentences = self._split_into_sentences(text)
-        risk_data_batch = []
-
-        # Collect all risks locally
-        for i, sentence in enumerate(sentences):
-            sentence_risks = self._analyze_sentence_locally(sentence, i)
-            risk_data_batch.extend(sentence_risks)
-
-        # Enhance with Gemini API if risks are found
-        if risk_data_batch:
-            enhanced_risks = await self._enhance_with_gemini_api(risk_data_batch)
-            risks.extend(enhanced_risks)
-
-        return risks
-
-    async def _enhance_with_gemini_api(self, risk_data: List[Dict]) -> List[Dict]:
-        """Enhance risk data with Gemini API explanations and tips."""
-        cached_results = {}
-        uncached_risks = []
-        batch_input = []
-
-        # Check cache for each risk
-        for risk in risk_data:
-            cache_key = f"{risk['sentence_index']}_{risk['sentence']}_{risk['risk_category']}"
-            if cache_key in self.cache:
-                cached_results[cache_key] = self.cache[cache_key]
-            else:
-                uncached_risks.append(risk)
-                batch_input.append(risk)
-
-        logger.info(f"Processing {len(risk_data)} risks: {len(cached_results)} cached, {len(uncached_risks)} to fetch")
-
-        # If all risks are cached, return cached results
-        if not uncached_risks:
-            return [cached_results[f"{r['sentence']}_{r['risk_category']}"] for r in risk_data]
-
-        # Batch API call for uncached risks (split if too large, e.g., >50)
-        batch_size = 50
-        api_responses = []
-        for i in range(0, len(uncached_risks), batch_size):
-            batch = batch_input[i:i + batch_size]
-            responses = await self._call_gemini_api(batch)
-            api_responses.extend(responses)
-
-        # Process API responses
-        for i, risk in enumerate(uncached_risks):
-            api_response = api_responses[i] if i < len(api_responses) else {}
-            explanation = api_response.get("explanation", risk["explanation"])
-            negotiation_tip = api_response.get("negotiation_tip", 
-                                              f"Consider negotiating the terms related to {risk['risk_category'].lower()}.")
-            risk["explanation"] = explanation
-            risk["negotiation_tip"] = negotiation_tip
-            cache_key = f"{risk['sentence']}_{risk['risk_category']}"
-            self.cache[cache_key] = risk
-
-        # Combine cached and newly fetched results
-        result = []
-        uncached_index = 0
-        for r in risk_data:
-            cache_key = f"{r['sentence']}_{r['risk_category']}"
-            if cache_key in cached_results:
-                result.append(cached_results[cache_key])
-            else:
-                result.append(uncached_risks[uncached_index])
-                uncached_index += 1
-        return result
+    priority_score: int
+    confidence_score: Optional[float] = 0.0
+    legal_concepts: Optional[List[str]] = []
+    entities: Optional[List[Dict]] = []
+    mitigation_strategies: Optional[List[str]] = []
+    negotiation_tactics: Optional[List[str]] = []
+    alternative_language: Optional[str] = ""
+    cost_implications: Optional[str] = ""
 
 
+class ContractSection(BaseModel):
+    title: str
+    content: str
+    risk_count: int
 
-    async def _call_gemini_api(self, batch_input: List[Dict]) -> List[Dict]:
-        """Make an asynchronous call to the Gemini API."""
-        api_key = os.getenv("GEMINI_API_KEY")
+
+class RiskSummary(BaseModel):
+    total_risks: int
+    critical_risk_count: Optional[int] = 0
+    high_risk_count: int
+    medium_risk_count: int
+    low_risk_count: int
+    overall_risk_level: str
+
+
+class EnhancedExtractAndAnalyzeResponse(BaseModel):
+    filename: str
+    extracted_text: str
+    analysis: List[EnhancedRiskAnalysis]
+    summary: RiskSummary
+    sections: List[ContractSection]
+    recommendations: List[str]
+    overall_summary: str
+    document_complexity_score: Optional[float] = 0.0
+    party_power_balance: Optional[float] = 0.5
+    compliance_coverage: Optional[Dict[str, float]] = {}
+
+
+# --------------------------------------------------------------------------- #
+# In-memory caches
+# --------------------------------------------------------------------------- #
+analyzer_cache: TTLCache = TTLCache(maxsize=1, ttl=3_600)     # 1 hour
+ai_cache: TTLCache = TTLCache(maxsize=500, ttl=1_800)         # 30 minutes
+
+
+def get_analyzer() -> LightweightContractAnalyzer:
+    """Return a cached instance of the lightweight analyzer."""
+    if "analyzer" not in analyzer_cache:
+        analyzer_cache["analyzer"] = LightweightContractAnalyzer()
+    return analyzer_cache["analyzer"]
+
+
+# --------------------------------------------------------------------------- #
+# Generative processor that adds Gemini-powered context
+# --------------------------------------------------------------------------- #
+class GenerativeContractProcessor:
+    def __init__(self) -> None:
+        self.gemini_client = self._initialise_gemini()
+
+    @staticmethod
+    def _initialise_gemini():
+        """Create a Gemini client if the SDK and key are present."""
+        if not GEMINI_AVAILABLE:
+            return None
+
+        api_key = "AIzaSyCWqH4CpR1EfWcmF-yiq26xrwxyooPcrDs"
         if not api_key:
-            raise ValueError("GEMINI_API_KEY environment variable is not set")
+            logger.warning("GEMINI_API_KEY not set – running without LLM boosts")
+            return None
 
-        client = genai.Client(api_key=api_key)
-        
         try:
-            # Process each risk item in the batch
-            results = []
-            
-            for risk in batch_input:
-                # Create a comprehensive prompt for analysis
-                prompt = f"""
-                Analyze the following contract clause for risks:
+            client = genai.Client(api_key=api_key)
+            logger.info("Gemini client initialised")
+            return client
+        except Exception as exc:  # pragma: no cover
+            logger.warning("Gemini initialisation failed: %s", exc)
+            return None
 
-                Contract Text: "{risk['sentence']}"
-                Risk Category: {risk['risk_category']}
-                Initial Analysis: {risk['explanation']}
+    # --------------------------------------------------------------------- #
+    # Public API
+    # --------------------------------------------------------------------- #
+    async def analyse_contract(self, text: str) -> Dict:
+        analyzer = get_analyzer()
 
-                Please provide:
-                1. Risk level assessment (HIGH/MEDIUM/LOW)
-                2. Specific concerns about this clause
-                3. Negotiation strategies to mitigate risks
-                4. Priority score (1-10)
+        try:
+            analyses, doc_profile = analyzer.analyze_contract_advanced(text)
 
-                Respond in JSON format:
-                {{
-                    "risk_level": "HIGH|MEDIUM|LOW",
-                    "specific_concerns": ["concern1", "concern2"],
-                    "negotiation_strategies": ["strategy1", "strategy2"],
-                    "priority_score": 1-10
-                }}
-                """
-                
-                # Make the API call
-                response = client.models.generate_content(
-                    model="gemini-2.0-flash",
-                    contents=prompt
-                )
-                
-                try:
-                    # Parse the JSON response
-                    analysis_result = json.loads(response.text)
-                    results.append(analysis_result)
-                except json.JSONDecodeError:
-                    # Fallback if JSON parsing fails
-                    logger.warning(f"Failed to parse Gemini response as JSON: {response.text}")
-                    results.append({
-                        "risk_level": "MEDIUM",
-                        "specific_concerns": ["Analysis unavailable"],
-                        "negotiation_strategies": ["Consult legal professional"],
-                        "priority_score": 5
-                    })
-            
-            return results
-            
-        except Exception as e:
-            logger.error(f"Gemini API call failed: {str(e)}")
-            # Return fallback data to maintain structure
-            return [{
-                "risk_level": "MEDIUM",
-                "specific_concerns": ["API analysis unavailable"],
-                "negotiation_strategies": ["Manual review recommended"],
-                "priority_score": 5
-            } for _ in batch_input]
-    
-# Initialize analyzer
-analyzer = ContractAnalyzer()
+            # Convert to API-friendly dicts and augment with AI
+            api_analyses: List[Dict] = []
+            for analysis in analyses:
+                base = {
+                    "sentence": analysis.sentence,
+                    "risk_category": analysis.risk_category,
+                    "risk_level": analysis.risk_level.value,
+                    "risk_type": analysis.clause_type.value.replace("_", " ").title(),
+                    "description": analysis.risk_explanation,
+                    "specific_concerns": [analysis.risk_explanation],
+                    "negotiation_strategies": analysis.mitigation_strategies,
+                    "priority_score": analysis.negotiation_priority,
+                    "confidence_score": analysis.confidence_score,
+                    "legal_concepts": analysis.legal_concepts,
+                    "entities": analysis.entities,
+                    "mitigation_strategies": analysis.mitigation_strategies,
+                    "negotiation_tactics": [],
+                    "alternative_language": "",
+                    "cost_implications": "",
+                }
 
-@app.post("/extract_and_analyze")
-async def extract_and_analyze(file: UploadFile = File(...)):
-    """Extract text from PDF and analyze for contract risks with Gemini API integration."""
-    if file.content_type != "application/pdf":
-        raise HTTPException(status_code=400, detail="File is not a PDF")
+                # Enrich with Gemini
+                if self.gemini_client:
+                    enriched = await self._generate_contextual_analysis(
+                        sentence=analysis.sentence,
+                        risk_category=analysis.risk_category,
+                        risk_level=analysis.risk_level.value,
+                        entities=analysis.entities,
+                    )
 
-    content = await file.read()
-    try:
-        # Extract text
-        text = extract_text_from_pdf(content)
-        if not text.strip():
-            raise HTTPException(status_code=400, detail="No text could be extracted from the PDF")
+                    base.update(
+                        {
+                            "description": enriched.get(
+                                "risk_explanation", base["description"]
+                            ),
+                            "specific_concerns": enriched.get(
+                                "specific_concerns", base["specific_concerns"]
+                            ),
+                            "negotiation_strategies": enriched.get(
+                                "mitigation_strategies",
+                                base["negotiation_strategies"],
+                            ),
+                            "negotiation_tactics": enriched.get("negotiation_tactics", []),
+                            "alternative_language": enriched.get("alternative_language", ""),
+                            "cost_implications": enriched.get("cost_implications", ""),
+                        }
+                    )
 
-        # Analyze contract using ContractAnalyzer with async API call
-        risks = await analyzer.analyze_contract_risks(text)
-        analysis = [RiskAnalysis(**risk) for risk in risks]
+                api_analyses.append(base)
 
-        # Calculate summary statistics
-        high_count = sum(1 for risk in analysis if risk.risk_level == "HIGH")
-        medium_count = sum(1 for risk in analysis if risk.risk_level == "MEDIUM")
-        low_count = sum(1 for risk in analysis if risk.risk_level == "LOW")
-        
-        # Determine overall risk level
-        if high_count > 0:
-            overall_risk = "HIGH"
-        elif medium_count > 2:
-            overall_risk = "MEDIUM-HIGH"
-        elif medium_count > 0:
-            overall_risk = "MEDIUM"
-        else:
-            overall_risk = "LOW"
+            # Global recommendations
+            recommendations = await self._generate_contract_recommendations(
+                text, api_analyses
+            )
 
+            sections = self._create_sections(api_analyses)
 
+            return {
+                "analyses": api_analyses,
+                "doc_profile": doc_profile,
+                "sections": sections,
+                "recommendations": recommendations,
+            }
+
+        except Exception as exc:  # pragma: no cover
+            logger.error("Contract analysis failed: %s", exc)
+            return {
+                "analyses": [],
+                "doc_profile": None,
+                "sections": [],
+                "recommendations": [
+                    "⚠️ Analysis failed – please retry or seek human review."
+                ],
+            }
+
+    # --------------------------------------------------------------------- #
+    # Internal helpers
+    # --------------------------------------------------------------------- #
+    async def _generate_contextual_analysis(
+        self,
+        sentence: str,
+        risk_category: str,
+        risk_level: str,
+        entities: List[Dict],
+    ) -> Dict:
+        """Invoke Gemini (with caching) to deepen risk commentary."""
+        cache_key = hashlib.md5(
+            f"{sentence}_{risk_category}_{risk_level}".encode()
+        ).hexdigest()
+        if cache_key in ai_cache:
+            return ai_cache[cache_key]
+
+        if not self.gemini_client:
+            return self._get_fallback_analysis(risk_category, risk_level)
+
+        prompt = self._build_clause_prompt(
+            sentence, risk_category, risk_level, entities
+        )
+        try:
+            response = self.gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=prompt,
+                config=types.GenerateContentConfig(temperature=0.3, max_output_tokens=800)
+            )
+
+            cleaned = self._strip_triple_backticks(response.text.strip())
+            generated = json.loads(cleaned)
+            ai_cache[cache_key] = generated
+            return generated
+        except (json.JSONDecodeError, Exception) as exc:  # pragma: no cover
+            logger.warning("Gemini parsing failed: %s", exc)
+            return self._get_fallback_analysis(risk_category, risk_level)
+
+    @staticmethod
+    def _build_clause_prompt(
+        sentence: str, risk_category: str, risk_level: str, entities: List[Dict]
+    ) -> str:
+        entity_context = (
+            ", ".join(f"{e['label']}: {e['text']}" for e in entities) if entities else "None"
+        )
+        return f"""
+You are a legal AI assistant analysing a contract clause. Produce a detailed JSON assessment.
+
+CLAUSE: "{sentence}"
+RISK TYPE: {risk_category}
+RISK LEVEL: {risk_level}
+EXTRACTED ENTITIES: {entity_context}
+
+Return JSON:
+{{
+  "risk_explanation": "...",
+  "specific_concerns": ["..."],
+  "mitigation_strategies": ["..."],
+  "negotiation_tactics": ["..."],
+  "alternative_language": "...",
+  "cost_implications": "..."
+}}
+
+Avoid generic statements; ground every comment in the clause content.
+""".strip()
+
+    async def _generate_contract_recommendations(
+        self, text: str, analyses: List[Dict]
+    ) -> List[str]:
+        if not self.gemini_client:
+            return self._get_fallback_recommendations(analyses)
+
+        prompt = self._build_recommendation_prompt(analyses)
+
+        try:
+            response = self.gemini_client.models.generate_content(
+                model="gemini-2.0-flash-exp",
+                contents=prompt,
+                generation_config={"temperature": 0.4, "max_output_tokens": 600},
+            )
+
+            cleaned = self._strip_triple_backticks(response.text.strip())
+            recs = json.loads(cleaned)
+            return recs if isinstance(recs, list) else self._get_fallback_recommendations(
+                analyses
+            )
+        except (json.JSONDecodeError, Exception):
+            return self._get_fallback_recommendations(analyses)
+
+    @staticmethod
+    def _build_recommendation_prompt(analyses: List[Dict]) -> str:
+        # Summarise top few risks per level for the LLM
+        levels = {"CRITICAL": [], "HIGH": [], "MEDIUM": [], "LOW": []}
+        for a in analyses:
+            levels.setdefault(a["risk_level"], []).append(a)
+
+        parts: List[str] = []
+        for lvl, items in levels.items():
+            if items:
+                parts.append(f"{lvl} RISKS ({len(items)}):")
+                for i in items[:3]:
+                    parts.append(f"- {i['risk_category']}: {i['sentence'][:100]}...")
+                if len(items) > 3:
+                    parts.append(f"...and {len(items) - 3} more")
+        risk_summary = "\n".join(parts)
+
+        return f"""
+You are a legal AI assistant. Based on the following analysis summary, provide 3-5 actionable, prioritised recommendations:
+
+{risk_summary}
+
+Output JSON list:
+["Recommendation 1", "Recommendation 2", ...]
+Prefix with emoji 🚨/⚠️/🔍/✅ according to criticality.
+""".strip()
+
+    # ------------------------------------------------------------------ #
+    # Utility helpers
+    # ------------------------------------------------------------------ #
+    @staticmethod
+    def _strip_triple_backticks(text: str) -> str:
+        """Remove optional `````` wrappers from LLM output."""
+        if text.startswith("```"):
+            text = text.lstrip("`").rstrip("`")
+        return text.strip()
+
+    @staticmethod
+    def _get_fallback_analysis(risk_category: str, risk_level: str) -> Dict:
         return {
-            "filename": file.filename,
-            "extracted_text": text,
-            "analysis": [risk.model_dump() for risk in analysis],
-            "risks_found": len(analysis),
-            "summary": {
-                "total_risks": len(analysis),
-                "high_risk_count": high_count,
-                "medium_risk_count": medium_count,
-                "low_risk_count": low_count,
-                "overall_risk_level": overall_risk
-            },
-            "sections": [],  # Add your section extraction logic here
-            "recommendations": [],  # Add your recommendations logic here
-            "overall_summary": f"Contract analysis complete. Found {len(analysis)} risks with {high_count} high-priority issues."
+            "risk_explanation": f"This {risk_category.lower()} clause carries {risk_level.lower()} risk.",
+            "specific_concerns": ["Requires legal review"],
+            "mitigation_strategies": ["Seek professional legal advice"],
+            "negotiation_tactics": ["Negotiate balanced terms"],
+            "alternative_language": "Consider more neutral wording",
         }
-    
-    except Exception as e:
-        logger.error(f"Error processing file: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing file: {str(e)}")
+
+    @staticmethod
+    def _get_fallback_recommendations(analyses: List[Dict]) -> List[str]:
+        high = sum(1 for a in analyses if a["risk_level"] == "HIGH")
+        critical = sum(1 for a in analyses if a["risk_level"] == "CRITICAL")
+        total = len(analyses)
+
+        recs: List[str] = []
+        if critical:
+            recs.append("🚨 Critical risks discovered – urgent legal attention needed")
+        if high > 2:
+            recs.append("⚠️ Several high-risk clauses – engage counsel for renegotiation")
+        if total > 8:
+            recs.append("📋 Complex contract with numerous risks – comprehensive review advised")
+        if not recs:
+            recs.append("✅ Manageable risk profile – proceed with standard review")
+        return recs
+
+    @staticmethod
+    def _create_sections(analyses: List[Dict]) -> List[Dict]:
+        grouped: Dict[str, List[Dict]] = {}
+        for a in analyses:
+            grouped.setdefault(a["risk_type"], []).append(a)
+
+        sections: List[Dict] = []
+        for title, items in grouped.items():
+            examples = " | ".join(
+                (s := it["sentence"])[:100] + ("..." if len(s) > 100 else "")
+                for it in items[:2]
+            )
+            sections.append({"title": title, "content": examples, "risk_count": len(items)})
+        return sections
+
+
+# Single, module-level processor instance
+processor = GenerativeContractProcessor()
+
+# --------------------------------------------------------------------------- #
+# Routes
+# --------------------------------------------------------------------------- #
+@app.post("/extract_and_analyze", response_model=EnhancedExtractAndAnalyzeResponse)
+async def extract_and_analyze(file: UploadFile = File(...)):
+    if file.content_type != "application/pdf":
+        raise HTTPException(status_code=400, detail="File must be a PDF")
+
+    try:
+        pdf_bytes = await file.read()
+        text = extract_text_from_pdf(pdf_bytes)
+
+        if not text.strip():
+            raise HTTPException(status_code=400, detail="Could not extract any text")
+
+        result = await processor.analyse_contract(text)
+
+        analyses = result["analyses"]
+        dp = result["doc_profile"]
+        sections = result["sections"]
+        recs = result["recommendations"]
+
+        critical = sum(1 for r in analyses if r["risk_level"] == "CRITICAL")
+        high = sum(1 for r in analyses if r["risk_level"] == "HIGH")
+        medium = sum(1 for r in analyses if r["risk_level"] == "MEDIUM")
+        low = sum(1 for r in analyses if r["risk_level"] == "LOW")
+
+        if critical:
+            overall = "CRITICAL"
+        elif high > 3:
+            overall = "HIGH"
+        elif high:
+            overall = "MEDIUM-HIGH"
+        elif medium > 2:
+            overall = "MEDIUM"
+        else:
+            overall = "LOW"
+
+        return EnhancedExtractAndAnalyzeResponse(
+            filename=file.filename,
+            extracted_text=text,
+            analysis=[EnhancedRiskAnalysis(**a) for a in analyses],
+            summary=RiskSummary(
+                total_risks=len(analyses),
+                critical_risk_count=critical,
+                high_risk_count=high,
+                medium_risk_count=medium,
+                low_risk_count=low,
+                overall_risk_level=overall,
+            ),
+            sections=[ContractSection(**s) for s in sections],
+            recommendations=recs,
+            overall_summary=f"{len(analyses)} risks found – {critical} critical, {high} high.",
+            document_complexity_score=getattr(dp, "legal_complexity_score", 0.3) if dp else 0.3,
+            party_power_balance=getattr(dp, "party_power_balance", 0.5) if dp else 0.5,
+            compliance_coverage=getattr(dp, "compliance_coverage", {}) if dp else {},
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:  # pragma: no cover
+        logger.error("Processing error: %s", exc)
+        raise HTTPException(status_code=500, detail=f"Processing failed: {exc}")
+
+
+@app.get("/health")
+async def health_check():
+    return {
+        "status": "healthy",
+        "version": app.version + "-generative",
+        "analyzer": "lightweight-generative",
+        "gemini_available": processor.gemini_client is not None,
+        "memory_optimized": True,
+        "serverless_ready": True,
+    }
+
+
+@app.get("/")
+async def root():
+    return {
+        "message": "LegalMind Backend API – AI-Powered Contract Analysis",
+        "version": app.version,
+        "docs": "/docs",
+        "health": "/health",
+    }
+
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, reload=True)
+
+    uvicorn.run(app, host="0.0.0.0", port=8000)
