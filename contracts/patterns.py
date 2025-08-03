@@ -1,26 +1,28 @@
 class ContractPatterns:
-    """Comprehensive contract risk patterns"""
+    """Comprehensive contract risk patterns with fixed regex"""
     
     def __init__(self):
         self.patterns = self._initialize_patterns()
+        self.risk_keywords = self._initialize_risk_keywords()
     
     def _initialize_patterns(self):
         return [
             {
                 "category": "Termination Risk",
-                "clause_type": "TERMINATION",
+                "clause_type": "TERMINATION", 
                 "risk_level": "HIGH",
                 "patterns": [
                     r"terminate.*without.*notice",
                     r"terminate.*at.*will",
                     r"terminate.*sole.*discretion",
                     r"immediate.*termination",
-                    r"terminate.*without.*cause"
+                    r"terminate.*without.*cause",
+                    r"end.*agreement.*immediately"
                 ],
                 "description": "Contract allows termination with minimal notice or justification",
                 "concerns": [
                     "Sudden contract termination risk",
-                    "Lack of adequate notice period",
+                    "Lack of adequate notice period", 
                     "No protection against arbitrary termination"
                 ],
                 "strategies": [
@@ -40,12 +42,13 @@ class ContractPatterns:
                     r"liable.*for.*all.*damages",
                     r"responsible.*for.*any.*loss",
                     r"indemnify.*against.*all.*claims",
-                    r"hold.*harmless.*from.*any"
+                    r"hold.*harmless.*from.*any",
+                    r"total.*liability.*exceeds"
                 ],
                 "description": "Excessive liability exposure with unlimited financial risk",
                 "concerns": [
                     "Unlimited financial exposure",
-                    "Disproportionate risk allocation",
+                    "Disproportionate risk allocation", 
                     "Potential bankruptcy risk"
                 ],
                 "strategies": [
@@ -59,13 +62,14 @@ class ContractPatterns:
             {
                 "category": "Payment Risk",
                 "clause_type": "PAYMENT",
-                "risk_level": "HIGH",
+                "risk_level": "HIGH", 
                 "patterns": [
                     r"payment.*due.*immediately",
                     r"no.*refund",
                     r"non-refundable",
                     r"penalty.*for.*late.*payment",
-                    r"interest.*rate.*of.*\d+%"
+                    r"interest.*rate.*of.*\d+%",
+                    r"late.*fee.*of.*\$\d+"
                 ],
                 "description": "Harsh payment terms with penalties and no refund provisions",
                 "concerns": [
@@ -75,7 +79,7 @@ class ContractPatterns:
                 ],
                 "strategies": [
                     "Negotiate payment schedule",
-                    "Reduce penalty rates",
+                    "Reduce penalty rates", 
                     "Add refund provisions for cause"
                 ],
                 "priority": 7,
@@ -90,7 +94,8 @@ class ContractPatterns:
                     r"work.*for.*hire",
                     r"assign.*all.*intellectual.*property",
                     r"waive.*moral.*rights",
-                    r"transfer.*all.*rights"
+                    r"transfer.*all.*rights",
+                    r"exclusive.*license.*to"
                 ],
                 "description": "Broad IP assignment with potential overreach",
                 "concerns": [
@@ -107,14 +112,14 @@ class ContractPatterns:
                 "confidence": 0.9
             },
             {
-                "category": "Confidentiality Risk",
+                "category": "Confidentiality Risk", 
                 "clause_type": "CONFIDENTIALITY",
                 "risk_level": "MEDIUM",
                 "patterns": [
                     r"perpetual.*confidentiality",
                     r"confidential.*information.*includes.*all",
                     r"non-disclosure.*indefinitely",
-                    r"broad.*confidentiality.*obligations"
+                    r"confidentiality.*period.*of.*\d+.*years"
                 ],
                 "description": "Overly broad or perpetual confidentiality requirements",
                 "concerns": [
@@ -135,11 +140,12 @@ class ContractPatterns:
                 "clause_type": "GOVERNING_LAW",
                 "risk_level": "MEDIUM",
                 "patterns": [
-                    r"governed.*by.*laws.*of.*(?!your_jurisdiction)",
-                    r"jurisdiction.*of.*courts.*in.*(?!your_location)",
-                    r"arbitration.*in.*(?!your_preferred_location)"
+                    r"governed.*by.*laws.*of.*(?:delaware|new york|california|texas)",
+                    r"jurisdiction.*of.*courts.*in.*(?:delaware|new york|california)",
+                    r"arbitration.*in.*(?:delaware|new york|singapore|london)",
+                    r"exclusive.*jurisdiction.*of"
                 ],
-                "description": "Unfavorable jurisdiction or governing law provisions",
+                "description": "Potentially unfavorable jurisdiction or governing law provisions",
                 "concerns": [
                     "Inconvenient legal jurisdiction",
                     "Unfamiliar legal system",
@@ -155,9 +161,21 @@ class ContractPatterns:
             }
         ]
     
+    def _initialize_risk_keywords(self):
+        """Keywords that indicate high-risk content"""
+        return {
+            "critical": ["unlimited", "liable", "indemnify", "penalty", "terminate", "forfeit"],
+            "high": ["exclusively", "perpetual", "irrevocable", "waive", "assign", "transfer"],
+            "medium": ["confidential", "proprietary", "jurisdiction", "governing", "arbitration"]
+        }
+    
     def get_all_patterns(self):
         """Return all contract risk patterns"""
         return self.patterns
+    
+    def get_risk_keywords(self):
+        """Return risk keywords for NLP filtering"""
+        return self.risk_keywords
     
     def get_patterns_by_category(self, category: str):
         """Get patterns for specific category"""

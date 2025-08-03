@@ -9,6 +9,7 @@ from enum import Enum
 
 from utils.cache import cache_result
 from contracts.patterns import ContractPatterns
+from contracts.nlp_pipeline import LightweightNLPPipeline
 
 # Optional Gemini integration
 try:
@@ -52,10 +53,11 @@ class RiskItem:
     confidence: float
 
 class HybridContractAnalyzer:
-    """Hybrid analyzer combining rule-based patterns with AI enhancement"""
+    """Hybrid analyzer with lightweight NLP pipeline"""
     
     def __init__(self):
         self.patterns = ContractPatterns()
+        self.nlp_pipeline = LightweightNLPPipeline()
         self.gemini_client = self._initialize_gemini()
         
     def _initialize_gemini(self) -> Optional[object]:
@@ -64,7 +66,8 @@ class HybridContractAnalyzer:
             logger.warning("Gemini SDK not available")
             return None
             
-        api_key = os.getenv("GEMINI_API_KEY")
+        # api_key = os.getenv("GEMINI_API_KEY")
+        api_key="AIzaSyCWqH4CpR1EfWcmF-yiq26xrwxyooPcrDs"
         if not api_key:
             logger.warning("GEMINI_API_KEY not configured")
             return None
@@ -78,22 +81,36 @@ class HybridContractAnalyzer:
             return None
     
     async def analyze_contract(self, text: str) -> Dict:
-        """Main analysis method combining rule-based and AI approaches"""
+        """Main analysis method with NLP pipeline"""
         try:
-            # Step 1: Rule-based analysis
-            sentences = self._split_into_sentences(text)
-            rule_based_risks = self._analyze_with_rules(sentences)
+            # Step 1: Use NLP pipeline to extract risky portions
+            risky_portions = self.nlp_pipeline.extract_risky_portions(text, max_portions=10)
+            logger.info(f"Extracted {len(risky_portions)} risky portions")
             
-            # Step 2: AI enhancement (if available)
+            # Step 2: Rule-based analysis on risky portions only
+            rule_based_risks = []
+            for portion in risky_portions:
+                sentence = portion['sentence']
+                risks = self._analyze_sentence_with_rules(sentence)
+                rule_based_risks.extend(risks)
+            
+            # Step 3: AI enhancement on top 3 highest-priority risks only
             enhanced_risks = []
+            top_risks = sorted(rule_based_risks, key=lambda x: x.priority, reverse=True)[:3]
+            
             for risk in rule_based_risks:
-                if self.gemini_client:
-                    enhanced_risk = await self._enhance_with_ai(risk)
-                    enhanced_risks.append(enhanced_risk)
+                if self.gemini_client and risk in top_risks:
+                    # Create focused prompt with key phrases only
+                    relevant_portion = next((p for p in risky_portions if p['sentence'] == risk.sentence), None)
+                    if relevant_portion:
+                        enhanced_risk = await self._enhance_with_focused_ai(risk, relevant_portion)
+                        enhanced_risks.append(enhanced_risk)
+                    else:
+                        enhanced_risks.append(self._convert_to_api_format(risk))
                 else:
                     enhanced_risks.append(self._convert_to_api_format(risk))
             
-            # Step 3: Generate summary and recommendations
+            # Step 4: Generate summary and recommendations
             summary = self._generate_summary(enhanced_risks)
             sections = self._extract_sections(enhanced_risks)
             recommendations = await self._generate_recommendations(enhanced_risks, text)
@@ -112,57 +129,48 @@ class HybridContractAnalyzer:
             logger.error(f"Contract analysis failed: {e}")
             raise
     
-    def _split_into_sentences(self, text: str) -> List[str]:
-        """Split text into sentences using improved regex"""
-        # Clean and normalize text
-        text = re.sub(r'\s+', ' ', text.strip())
-        
-        # Split on sentence boundaries
-        sentences = re.split(r'(?<=[.!?])\s+(?=[A-Z])', text)
-        
-        # Filter out very short sentences
-        return [s.strip() for s in sentences if len(s.strip()) > 20]
-    
-    def _analyze_with_rules(self, sentences: List[str]) -> List[RiskItem]:
-        """Analyze sentences using rule-based patterns"""
+    def _analyze_sentence_with_rules(self, sentence: str) -> List[RiskItem]:
+        """Analyze a single sentence using rule-based patterns"""
         risks = []
+        sentence_lower = sentence.lower()
         
-        for sentence in sentences:
-            sentence_lower = sentence.lower()
-            
-            # Check each pattern category
-            for pattern_data in self.patterns.get_all_patterns():
-                for pattern in pattern_data["patterns"]:
-                    if re.search(pattern, sentence_lower):
-                        risk = RiskItem(
-                            sentence=sentence,
-                            risk_category=pattern_data["category"],
-                            risk_level=RiskLevel[pattern_data["risk_level"]],
-                            clause_type=ClauseType[pattern_data["clause_type"]],
-                            description=pattern_data["description"],
-                            concerns=pattern_data["concerns"],
-                            strategies=pattern_data["strategies"],
-                            priority=pattern_data["priority"],
-                            confidence=pattern_data["confidence"]
-                        )
-                        risks.append(risk)
-                        break  # Avoid duplicate matches
+        for pattern_data in self.patterns.get_all_patterns():
+            for pattern in pattern_data["patterns"]:
+                if re.search(pattern, sentence_lower):
+                    risk = RiskItem(
+                        sentence=sentence,
+                        risk_category=pattern_data["category"],
+                        risk_level=RiskLevel[pattern_data["risk_level"]],
+                        clause_type=ClauseType[pattern_data["clause_type"]],
+                        description=pattern_data["description"],
+                        concerns=pattern_data["concerns"],
+                        strategies=pattern_data["strategies"],
+                        priority=pattern_data["priority"],
+                        confidence=pattern_data["confidence"]
+                    )
+                    risks.append(risk)
+                    break  # Avoid duplicate matches
         
         return risks
     
-    @cache_result(ttl=1800)  # 30 minutes cache
-    async def _enhance_with_ai(self, risk: RiskItem) -> Dict:
-        """Enhance risk analysis using Gemini AI"""
+    @cache_result(ttl=1800)
+    async def _enhance_with_focused_ai(self, risk: RiskItem, portion_data: Dict) -> Dict:
+        """Enhance risk analysis using focused AI with minimal data"""
         if not self.gemini_client:
             return self._convert_to_api_format(risk)
         
         try:
-            prompt = self._build_enhancement_prompt(risk)
+            # Create minimal prompt with key phrases only
+            key_phrases = portion_data.get('key_phrases', [])[:3]  # Limit to top 3
+            focused_prompt = self._build_minimal_prompt(risk, key_phrases)
             
             response = self.gemini_client.models.generate_content(
                 model="gemini-2.0-flash-exp",
-                contents=prompt,
-                config={"temperature": 0.3, "max_output_tokens": 600}
+                contents=focused_prompt,
+                config={
+                    "temperature": 0.3, 
+                    "max_output_tokens": 300  # Reduced token limit
+                }
             )
             
             ai_enhancement = self._parse_ai_response(response.text)
@@ -172,39 +180,63 @@ class HybridContractAnalyzer:
             logger.warning(f"AI enhancement failed: {e}")
             return self._convert_to_api_format(risk)
     
-    def _build_enhancement_prompt(self, risk: RiskItem) -> str:
-        """Build prompt for AI enhancement"""
+    def _build_minimal_prompt(self, risk: RiskItem, key_phrases: List[str]) -> str:
+        """Build minimal prompt focusing only on key risk elements"""
+        phrases_text = ", ".join(key_phrases[:3]) if key_phrases else "N/A"
+        
         return f"""
-Analyze this contract clause and enhance the risk assessment:
+Risk: {risk.risk_category}
+Level: {risk.risk_level.value}
+Key phrases: {phrases_text}
 
-CLAUSE: "{risk.sentence}"
-IDENTIFIED RISK: {risk.risk_category}
-CURRENT LEVEL: {risk.risk_level.value}
-
-Provide enhanced analysis in JSON format:
+Provide brief JSON response:
 {{
-  "enhanced_description": "More detailed explanation",
+  "enhanced_description": "Brief explanation",
   "specific_concerns": ["concern1", "concern2"],
   "negotiation_strategies": ["strategy1", "strategy2"],
-  "alternative_language": "Suggested safer wording",
-  "cost_implications": "Financial impact assessment"
+  "alternative_language": "Brief suggested wording"
 }}
-
-Focus on practical, actionable insights.
 """.strip()
     
-    def _parse_ai_response(self, response_text: str) -> Dict:
-        """Parse AI response safely"""
+    def _parse_ai_response(self, response_text: str) -> dict:
+        """Parse AI response safely with better error handling and robust JSON extraction."""
         try:
-            # Clean response
+            # Clean response: strip whitespace and remove any leading/trailing non-JSON text
             cleaned = response_text.strip()
-            if cleaned.startswith("```"):
-                cleaned = re.sub(r'^```(?:json)?\s*', '', cleaned)
-                cleaned = re.sub(r'\s*```','', cleaned)
+
+            # Step 1: Remove markdown code blocks if present
+            # This regex captures content between ``````
+            # Uses DOTALL to handle multi-line, and greedy match for the largest block
+            code_block_match = re.search(r'``````', cleaned, re.DOTALL | re.IGNORECASE)
+            if code_block_match:
+                cleaned = code_block_match.group(1)
+            else:
+                # If no code block, try to find the first valid JSON-like structure
+                # This matches objects {}, arrays [], or simple values, allowing nested structures
+                json_match = re.search(r'(?:\{.*?\} | \[\s*.*?]\s* | "(?:[^"\\]|\\.)*" | \d+\.?\d* | true | false | null)', cleaned, re.DOTALL | re.VERBOSE)
+                if json_match:
+                    cleaned = json_match.group(0)
+                # If still no match, assume the whole cleaned text is the JSON
+
+            # Step 2: Attempt to parse as JSON
+            parsed = json.loads(cleaned)
             
-            return json.loads(cleaned)
-        except json.JSONDecodeError:
-            logger.warning("Failed to parse AI response as JSON")
+            # Ensure it's a dict (as per your original return type); convert if needed
+            if not isinstance(parsed, dict):
+                if isinstance(parsed, list):
+                    parsed = {"data": parsed}  # Wrap arrays in a dict for consistency
+                else:
+                    raise ValueError(f"Parsed JSON is not a dict or list: {type(parsed)}")
+
+            return parsed
+
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse AI response as JSON: {e}")
+            logger.debug(f"Original response text: {response_text}")
+            logger.debug(f"Cleaned text: {cleaned}")
+            return {}
+        except Exception as e:
+            logger.warning(f"Unexpected error parsing AI response: {e}")
             return {}
     
     def _merge_analyses(self, rule_risk: RiskItem, ai_enhancement: Dict) -> Dict:
@@ -223,7 +255,7 @@ Focus on practical, actionable insights.
             "entities": [],
             "mitigation_strategies": rule_risk.strategies,
             "alternative_language": ai_enhancement.get("alternative_language", ""),
-            "cost_implications": ai_enhancement.get("cost_implications", "")
+            "cost_implications": ""
         }
     
     def _convert_to_api_format(self, risk: RiskItem) -> Dict:
@@ -293,12 +325,11 @@ Focus on practical, actionable insights.
                     "count": 0
                 }
             
-            sections_map[section_type]["sentences"].append(risk["sentence"])
+            sections_map[section_type]["sentences"].append(risk["sentence"][:100] + "...")
             sections_map[section_type]["count"] += 1
         
         sections = []
         for section_type, data in sections_map.items():
-            # Create representative content (first 2 sentences)
             content = " | ".join(data["sentences"][:2])
             if len(data["sentences"]) > 2:
                 content += f" | ... ({len(data['sentences']) - 2} more)"
@@ -320,7 +351,6 @@ Focus on practical, actionable insights.
         high_count = sum(1 for r in risks if r["risk_level"] == "HIGH")
         total_risks = len(risks)
         
-        # Priority-based recommendations
         if critical_count > 0:
             recommendations.append(f"🚨 {critical_count} critical risk(s) detected - immediate legal review required")
         
@@ -332,10 +362,10 @@ Focus on practical, actionable insights.
         
         # Specific category recommendations
         risk_categories = [r["risk_category"] for r in risks]
-        if "Liability" in risk_categories:
+        if "Liability Risk" in risk_categories:
             recommendations.append("🛡️ Review liability clauses for balanced risk allocation")
         
-        if "Payment" in risk_categories:
+        if "Payment Risk" in risk_categories:
             recommendations.append("💰 Examine payment terms and penalty clauses carefully")
         
         if not recommendations:
@@ -358,24 +388,22 @@ Focus on practical, actionable insights.
     
     def _calculate_complexity(self, text: str) -> float:
         """Calculate document complexity score"""
-        # Simple complexity metrics
         word_count = len(text.split())
-        avg_sentence_length = word_count / max(len(re.split(r'[.!?]', text)), 1)
+        sentences = re.split(r'[.!?]', text)
+        avg_sentence_length = word_count / max(len(sentences), 1)
         
-        # Normalize to 0-1 scale
         complexity = min((avg_sentence_length - 10) / 30, 1.0)
         return max(complexity, 0.0)
     
     def _assess_power_balance(self, text: str) -> float:
         """Assess power balance between parties"""
-        # Look for imbalanced language patterns
         text_lower = text.lower()
         
         strong_language = len(re.findall(r'\b(shall|must|required|mandatory|obligated)\b', text_lower))
         weak_language = len(re.findall(r'\b(may|can|should|recommended|suggested)\b', text_lower))
         
         if strong_language + weak_language == 0:
-            return 0.5  # Neutral
+            return 0.5
         
         balance = weak_language / (strong_language + weak_language)
         return balance
