@@ -134,6 +134,9 @@ class HybridContractAnalyzer:
         risks = []
         sentence_lower = sentence.lower()
         
+        # Track if any pattern matched
+        pattern_matched = False
+        
         for pattern_data in self.patterns.get_all_patterns():
             for pattern in pattern_data["patterns"]:
                 if re.search(pattern, sentence_lower):
@@ -149,9 +152,25 @@ class HybridContractAnalyzer:
                         confidence=pattern_data["confidence"]
                     )
                     risks.append(risk)
-                    break  # Avoid duplicate matches
+                    pattern_matched = True
+                    break  # Avoid duplicate matches for same category
+        
+        # If no specific patterns matched, create a generic risk item
+        if not pattern_matched:
+            risks.append(RiskItem(
+                sentence=sentence,
+                risk_category="General Risk",
+                risk_level=RiskLevel.MEDIUM,  # Default to medium
+                clause_type=ClauseType.GENERAL,
+                description="Potentially risky clause identified by AI analysis",
+                concerns=["Requires legal review", "May contain unfavorable terms"],
+                strategies=["Review clause carefully", "Consider negotiation", "Seek legal advice"],
+                priority=5,  # Medium priority
+                confidence=0.7  # Lower confidence for generic matches
+            ))
         
         return risks
+
     
     @cache_result(ttl=1800)
     async def _enhance_with_focused_ai(self, risk: RiskItem, portion_data: Dict) -> Dict:
