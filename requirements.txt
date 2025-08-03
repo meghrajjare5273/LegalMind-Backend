@@ -1,7 +1,29 @@
+# Core framework
 fastapi==0.115.8
 uvicorn==0.34.0
+
+# Data validation
 pydantic==2.10.6
 pydantic_core==2.27.2
+
+# PDF processing
 PyMuPDF==1.25.5
+
+# File uploads
 python-multipart==0.0.20
+
+# NLP and ML
+nltk==3.8.1
+scikit-learn==1.4.2
+numpy==1.26.4
+
+# Caching
+cachetools==5.3.3
+
+# Optional: Google Gemini AI integration
 google-genai==1.17.0
+
+# Logging (included with Python, but you use it extensively)
+# No need to specify 'logging' in requirements.txt
+
+# If requirements ever expand to include docstring testing, add pytest, etc.
