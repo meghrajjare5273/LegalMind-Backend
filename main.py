@@ -181,6 +181,109 @@ async def extract_and_analyze(file: UploadFile = File(...)):
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Analysis failed: {str(e)}"
         )
+    # Add these imports at the top
+from typing import Union
+import requests
+
+# Add these new endpoints after your existing ones
+@app.post("/voice/analyze_text")
+async def voice_analyze_text(request: dict):
+    """Analyze text input from voice assistant"""
+    try:
+        text = request.get("text", "").strip()
+        if not text:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No text provided"
+            )
+        
+        # Use the existing analyzer for text-only analysis
+        analysis_result = await analyzer.analyze_contract(text)
+        
+        # Return a simplified response for voice interaction
+        response = {
+            "summary": analysis_result["summary"],
+            "top_risks": analysis_result["analyses"][:3],  # Top 3 risks only
+            "recommendations": analysis_result["recommendations"][:3],
+            "overall_summary": analysis_result["overall_summary"]
+        }
+        
+        logger.info("Voice text analysis completed")
+        return response
+        
+    except Exception as e:
+        logger.error(f"Voice text analysis failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Analysis failed: {str(e)}"
+        )
+
+@app.post("/voice/quick_question")
+async def voice_quick_question(request: dict):
+    """Handle quick legal questions from voice assistant"""
+    try:
+        question = request.get("question", "").strip()
+        context = request.get("context", "")
+        
+        if not question:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No question provided"
+            )
+        
+        # Use Gemini for quick legal Q&A if available
+        if analyzer.gemini_client:
+            try:
+                prompt = f"""
+                Legal Question: {question}
+                Context: {context[:500] if context else 'No previous context'}
+                
+                Provide a brief, helpful answer (max 100 words) about this legal question.
+                Focus on practical advice and mention when professional legal counsel is recommended.
+                """
+                
+                response = analyzer.gemini_client.models.generate_content(
+                    model="gemini-2.0-flash-exp",
+                    contents=prompt,
+                    config={"temperature": 0.3, "max_output_tokens": 150}
+                )
+                
+                answer = response.text.strip()
+                
+            except Exception as e:
+                logger.warning(f"Gemini Q&A failed: {e}")
+                answer = "I'm having trouble accessing detailed legal information right now. Please consult with a legal professional for specific advice."
+        else:
+            answer = "For specific legal questions, I recommend consulting with a qualified attorney who can provide personalized advice."
+        
+        return {
+            "question": question,
+            "answer": answer,
+            "recommendation": "Always consult with a legal professional for important matters."
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Voice Q&A failed: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Q&A failed: {str(e)}"
+        )
+
+@app.get("/voice/status")
+async def voice_status():
+    """Voice assistant status endpoint"""
+    return {
+        "status": "ready",
+        "capabilities": [
+            "contract_analysis",
+            "legal_questions", 
+            "risk_assessment"
+        ],
+        "ai_available": analyzer.gemini_client is not None
+    }
+
 
 @app.get("/health")
 async def health_check():
