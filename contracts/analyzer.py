@@ -66,7 +66,8 @@ class HybridContractAnalyzer:
             logger.warning("Gemini SDK not available")
             return None
             
-        api_key = os.getenv("GEMINI_API_KEY")
+        # api_key = os.getenv("GEMINI_API_KEY")
+        api_key = "AIzaSyCWqH4CpR1EfWcmF-yiq26xrwxyooPcrDs"
         
         if not api_key:
             logger.warning("GEMINI_API_KEY not configured")
