@@ -13,6 +13,8 @@ from pdf_utils.pdf_functions import extract_text_from_pdf, is_valid_pdf
 from contracts.analyzer import HybridContractAnalyzer
 from utils.cache import CacheManager
 
+from agents.orchestrator import OrchestratorAgent
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -22,15 +24,17 @@ logger = logging.getLogger(__name__)
 
 # Global instances
 analyzer = None
+orchestrator = None
 cache_manager = CacheManager()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Manage application lifecycle"""
-    global analyzer
+    global analyzer, orchestrator
     try:
-        logger.info("Initializing Hybrid Contract Analyzer...")
+        logger.info("Initializing Hybrid Contract Analyzer and Orchestrator")
         analyzer = HybridContractAnalyzer()
+        orchestrator = OrchestratorAgent()
         logger.info("Application startup complete")
         yield
     except Exception as e:
@@ -38,6 +42,8 @@ async def lifespan(app: FastAPI):
         raise
     finally:
         logger.info("Application shutdown")
+
+    
 
 app = FastAPI(
     title="LegalMind Backend API",
