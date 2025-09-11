@@ -10,5 +10,12 @@ class Settings(BaseSettings):
     EMB_MODEL: str = "gemini-embedding-exp-03-07"
     LLM_MODEL: str = "gemini-1.5-flash"
     MAX_CHUNK_TOKENS: int = 1_000
+    
+    MAX_FILE_SIZE_MB: int = 10
+    CACHE_TTL: int = 3600
+    AI_ENHANCEMENT_ENABLED: bool = True
+    
+    class Config:
+        env_file = ".env"
 
-settings = Settings()          # import this anywhere
+settings = Settings()
