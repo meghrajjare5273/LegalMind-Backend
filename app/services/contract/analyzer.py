@@ -11,6 +11,11 @@ from utils.cache import cache_result
 from .patterns import ContractPatterns
 from .nlp_pipeline import LightweightNLPPipeline
 
+
+# Add this at the top of analyzer.py after imports
+_gemini_client = None
+
+
 # Optional Gemini integration
 try:
     from google import genai
@@ -58,28 +63,21 @@ class HybridContractAnalyzer:
     def __init__(self):
         self.patterns = ContractPatterns()
         self.nlp_pipeline = LightweightNLPPipeline()
-        self.gemini_client = self._initialize_gemini()
+        self.gemini_client = self._get_gemini_client()
         
-    def _initialize_gemini(self) -> Optional[object]:
-        """Initialize Gemini client safely"""
-        if not GEMINI_AVAILABLE:
-            logger.warning("Gemini SDK not available")
-            return None
-            
-        api_key = os.getenv("GEMINI_API_KEY")
-        # api_key = 
-        
-        if not api_key:
-            logger.warning("GEMINI_API_KEY not configured")
-            return None
-            
-        try:
-            client = genai.Client(api_key=api_key)
-            logger.info("Gemini client initialized successfully")
-            return client
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini: {e}")
-            return None
+    def _get_gemini_client(cls):
+            """Get singleton Gemini client"""
+            global _gemini_client
+            if _gemini_client is None and GEMINI_AVAILABLE:
+                api_key = os.getenv("GEMINI_API_KEY")
+                if api_key:
+                    try:
+                        _gemini_client = genai.Client(api_key=api_key)
+                        logger.info("Gemini client initialized successfully")
+                    except Exception as e:
+                        logger.error(f"Failed to initialize Gemini: {e}")
+                        _gemini_client = False
+            return _gemini_client if _gemini_client is not False else None
     
     async def analyze_contract(self, text: str) -> Dict:
         """Main analysis method with NLP pipeline"""

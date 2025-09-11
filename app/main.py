@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from api.v1 import health, contract_analysis, rag_chat
+from api.v1 import health, contract_analysis
 from core.config import settings
 import os
 
@@ -30,7 +30,6 @@ app.add_middleware(
 # Register routers
 app.include_router(health.router, prefix="/api/v1")
 app.include_router(contract_analysis.router, prefix="/api/v1") 
-app.include_router(rag_chat.router, prefix="/api/v1")
 
 @app.get("/")
 async def root():
@@ -40,7 +39,6 @@ async def root():
         "version": "5.0.0",
         "endpoints": {
             "contract_analysis": "/api/v1/contract-analysis/analyze",
-            "rag_chat": "/api/v1/rag-chat",
             "health": "/api/v1/health",
             "docs": "/docs"
         }
