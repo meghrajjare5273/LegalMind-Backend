@@ -4,7 +4,7 @@ from pydantic_settings import BaseSettings
 
 class Settings(BaseSettings):
     ENV: str = "development"
-    GEMINI_API_KEY: str = Field("AIzaSyCWqH4CpR1EfWcmF-yiq26xrwxyooPcrDs")
+    GEMINI_API_KEY: str = Field(" ")
     LLM_MODEL: str = "gemini-1.5-flash"
     MAX_CHUNK_TOKENS: int = 1_000
 

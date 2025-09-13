@@ -1,7 +1,7 @@
 from fastapi import APIRouter, HTTPException, UploadFile, File, status
 from models.contract import AnalysisResponse
 from services.pdf.processor import PDFProcessor
-from services.contract.analyzer import HybridContractAnalyzer
+from services.contract.analyzer import EnhancedContractAnalyzer
 from utils.cache import cache_result
 import time
 import logging
@@ -11,29 +11,30 @@ router = APIRouter(prefix="/contract-analysis", tags=["Contract Analysis"])
 logger = logging.getLogger(__name__)
 
 # Initialize analyzer as a singleton
-_analyzer = None
+# Initialize enhanced analyzer as a singleton
+_enhanced_analyzer = None
 
-def get_analyzer():
-    global _analyzer
-    if _analyzer is None:
-        _analyzer = HybridContractAnalyzer()
-    return _analyzer
+def get_enhanced_analyzer():
+    global _enhanced_analyzer
+    if _enhanced_analyzer is None:
+        logger.info("Initializing Enhanced Contract Analyzer...")
+        _enhanced_analyzer = EnhancedContractAnalyzer()
+        logger.info("Enhanced Contract Analyzer initialized successfully")
+    return _enhanced_analyzer
 
 @router.post("/analyze", response_model=AnalysisResponse)
-async def extract_and_analyze(file: UploadFile = File(...)):
-    """Extract text from PDF and perform comprehensive contract analysis"""
+async def extract_and_analyze_enhanced(file: UploadFile = File(...)):
+    """Extract text from PDF and perform enhanced contract analysis"""
     
-    # Validate file type and size first (lightweight checks)
+    # Keep all your existing validation logic
     if not file.content_type or file.content_type != "application/pdf":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Only PDF files are supported"
         )
     
-    # Read file content
     file_content = await file.read()
     
-    # Validate file size (max 10MB)
     MAX_FILE_SIZE = 10 * 1024 * 1024
     if len(file_content) > MAX_FILE_SIZE:
         raise HTTPException(
@@ -41,20 +42,15 @@ async def extract_and_analyze(file: UploadFile = File(...)):
             detail="File size exceeds 10MB limit"
         )
     
-    # Create cache key based on file content hash
-    file_hash = hashlib.md5(file_content).hexdigest()
-    
     try:
         start_time = time.time()
         
-        # Quick PDF validation
         if not PDFProcessor.is_valid_pdf(file_content):
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid PDF file format"
             )
         
-        # Extract text with optimized processor
         logger.info(f"Processing file: {file.filename}")
         extracted_text = PDFProcessor.extract_text_from_pdf(file_content)
         
@@ -64,14 +60,13 @@ async def extract_and_analyze(file: UploadFile = File(...)):
                 detail="No readable text found in PDF"
             )
         
-        # Perform analysis with cached analyzer
-        analyzer = get_analyzer()
+        # Use enhanced analyzer
+        analyzer = get_enhanced_analyzer()
         analysis_result = await analyzer.analyze_contract(extracted_text)
         
-        # Calculate processing time
         processing_time = time.time() - start_time
         
-        # Build optimized response
+        # Build response (keep your existing structure)
         response = AnalysisResponse(
             filename=file.filename,
             extracted_text=extracted_text[:2000] + "..." if len(extracted_text) > 2000 else extracted_text,
@@ -85,14 +80,14 @@ async def extract_and_analyze(file: UploadFile = File(...)):
             processing_time=processing_time
         )
         
-        logger.info(f"Analysis completed for {file.filename} in {processing_time:.2f}s")
+        logger.info(f"Enhanced analysis completed for {file.filename} in {processing_time:.2f}s")
         return response
         
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Analysis failed for {file.filename}: {str(e)}")
+        logger.error(f"Enhanced analysis failed for {file.filename}: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Analysis failed: {str(e)}"
+            detail=f"Enhanced analysis failed: {str(e)}"
         )

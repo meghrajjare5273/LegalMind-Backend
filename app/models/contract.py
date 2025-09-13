@@ -43,3 +43,9 @@ class AnalysisResponse(BaseModel):
     document_complexity_score: float = Field(default=0.0, ge=0.0, le=1.0)
     party_power_balance: float = Field(default=0.5, ge=0.0, le=1.0)
     processing_time: Optional[float] = None
+
+     
+    # New semantic fields
+    semantic_insights: Optional[Dict] = Field(default_factory=dict)
+    analysis_confidence: Optional[float] = Field(default=0.7, ge=0.0, le=1.0)
+    pattern_matching_accuracy: Optional[float] = Field(default=0.0, ge=0.0, le=1.0)

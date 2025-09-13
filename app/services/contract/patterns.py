@@ -4,6 +4,7 @@ class ContractPatterns:
     def __init__(self):
         self.patterns = self._initialize_patterns()
         self.risk_keywords = self._initialize_risk_keywords()
+        self.contextual_patterns = self._initialize_contextual_patterns()
     
     def _initialize_patterns(self):
         return [
@@ -167,6 +168,26 @@ class ContractPatterns:
             "critical": ["unlimited", "liable", "indemnify", "penalty", "terminate", "forfeit"],
             "high": ["exclusively", "perpetual", "irrevocable", "waive", "assign", "transfer"],
             "medium": ["confidential", "proprietary", "jurisdiction", "governing", "arbitration"]
+        }
+    
+    def _initialize_contextual_patterns(self):
+        """Patterns that need contextual analysis"""
+        return {
+            "financial_thresholds": [
+                r"\$\d{1,3}(?:,\d{3})*(?:\.\d{2})?",  # Money amounts
+                r"\d+(?:\.\d+)?%",  # Percentages
+                r"\d+\s*(?:times|x)\s*(?:the|contract|annual)"  # Multipliers
+            ],
+            "time_constraints": [
+                r"\d+\s*(?:days?|hours?|business\s*days?)",
+                r"immediately",
+                r"without\s*delay",
+                r"forthwith"
+            ],
+            "absolute_language": [
+                r"\b(?:all|any|every|entire|complete|total|unlimited|absolute)\b",
+                r"\b(?:never|always|forever|perpetual|permanent)\b"
+            ]
         }
     
     def get_all_patterns(self):
