@@ -6,10 +6,12 @@ import hashlib
 from typing import Dict, List, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
+from itertools import cycle
 
 from utils.cache import cache_result
-from .patterns import ContractPatterns  # Updated import
-from .nlp_pipeline import ImprovedNLPPipeline   # Updated import
+from .patterns import ContractPatterns  
+from .nlp_pipeline import ImprovedNLPPipeline 
+from core.config import settings # Import your settings
 
 # Keep your existing Gemini integration
 try:
@@ -21,7 +23,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Keep your existing enums and dataclasses
+# --- Enums and Dataclasses (No Change) ---
 class RiskLevel(Enum):
     LOW = "LOW"
     MEDIUM = "MEDIUM"
@@ -52,138 +54,63 @@ class EnhancedRiskItem:
     strategies: List[str]
     priority: int
     confidence: float
-    detection_method: str = "rule-based"  # Track how it was detected
+    detection_method: str = "rule-based" 
     specific_risks: List[str] = None
     entities: Dict = None
+# --- End of Enums and Dataclasses ---
+
 
 class EnhancedContractAnalyzer:
-    """Enhanced analyzer that builds on existing system"""
+    """Enhanced analyzer that uses a pool of clients and user context"""
     
     def __init__(self):
         self.patterns = ContractPatterns()
         self.nlp_pipeline = ImprovedNLPPipeline()
-        self.gemini_client = self._get_gemini_client()
+        # Create the client pool and rotator
+        self.client_pool, self.client_rotator = self._initialize_client_pool()
         
-    def _get_gemini_client(self):
-        """Keep your existing Gemini client setup"""
+    def _initialize_client_pool(self):
+        """Creates a pool of Gemini clients from the settings."""
         if not GEMINI_AVAILABLE:
-            return None
+            logger.warning("google-genai library not found. AI enhancement disabled.")
+            return [], None
             
-        api_key = os.getenv("GEMINI_API_KEY")
-        if not api_key:
-            return None
+        api_keys = settings.GEMINI_KEY_LIST
+        if not api_keys:
+            logger.warning("GEMINI_API_KEYS not set in environment. AI enhancement disabled.")
+            return [], None
             
+        clients = []
+        for key in api_keys:
+            try:
+                client = genai.Client(api_key=key)
+                clients.append(client)
+                logger.info("Gemini client initialized successfully.")
+            except Exception as e:
+                logger.error(f"Failed to initialize Gemini client with a key: {e}")
+        
+        if not clients:
+            logger.error("No valid Gemini clients could be initialized.")
+            return [], None
+        
+        logger.info(f"Successfully initialized {len(clients)} Gemini clients into a pool.")
+        # Create an iterator that cycles through the pool indefinitely
+        return clients, cycle(clients)
+
+    def _get_next_gemini_client(self):
+        """Gets the next available client from the rotating pool."""
+        if not self.client_rotator:
+            return None
         try:
-            client = genai.Client(api_key=api_key)
-            logger.info("Gemini client initialized successfully")
-            return client
-        except Exception as e:
-            logger.error(f"Failed to initialize Gemini: {e}")
+            return next(self.client_rotator)
+        except StopIteration:
+            # This should ideally not happen with cycle, but good to have a fallback
+            logger.warning("Client rotator exhausted, re-initializing pool.")
+            self.client_pool, self.client_rotator = self._initialize_client_pool()
+            if self.client_rotator:
+                return next(self.client_rotator)
             return None
-    
-    async def analyze_contract(self, text: str) -> Dict:
-        """Enhanced analysis with multiple detection layers"""
-        try:
-            logger.info("Starting enhanced contract analysis...")
-            
-            # Step 1: Extract risky portions using improved NLP
-            risky_portions = self.nlp_pipeline.extract_risky_portions(text, max_portions=20)
-            logger.info(f"Extracted {len(risky_portions)} risky portions")
-            
-            # Step 2: Apply rule-based analysis to ALL sentences (not just risky ones)
-            all_sentences = self._get_all_sentences(text)
-            rule_based_risks = []
-            
-            # Analyze risky portions first
-            for portion in risky_portions:
-                risks = self._analyze_sentence_with_enhanced_rules(portion['sentence'], portion)
-                rule_based_risks.extend(risks)
-            
-            # Also scan full text for patterns that might be missed
-            additional_risks = self._scan_full_text_patterns(text)
-            rule_based_risks.extend(additional_risks)
-            
-            # Remove duplicates
-            unique_risks = self._deduplicate_risks(rule_based_risks)
-            logger.info(f"Found {len(unique_risks)} unique risks after deduplication")
-            
-            # Step 3: Enhanced AI analysis with better context
-            enhanced_risks = []
-            top_risks = sorted(unique_risks, key=lambda x: x.priority, reverse=True)[:5]
-            
-            for risk in unique_risks:
-                if self.gemini_client and risk in top_risks:
-                    enhanced_risk = await self._enhance_with_comprehensive_ai(risk, text)
-                    enhanced_risks.append(enhanced_risk)
-                else:
-                    enhanced_risks.append(self._convert_to_api_format(risk))
-            
-            # Step 4: Generate comprehensive results
-            return {
-                "analyses": enhanced_risks,
-                "summary": self._generate_enhanced_summary(enhanced_risks),
-                "sections": self._extract_enhanced_sections(enhanced_risks),
-                "recommendations": await self._generate_enhanced_recommendations(enhanced_risks, text),
-                "overall_summary": self._create_enhanced_overall_summary(enhanced_risks),
-                "complexity_score": self._calculate_complexity(text),
-                "power_balance": self._assess_power_balance(text),
-                "detection_stats": self._get_detection_statistics(unique_risks)
-            }
-            
-        except Exception as e:
-            logger.error(f"Enhanced analysis failed: {e}")
-            raise
-    
-    def _get_all_sentences(self, text: str) -> List[str]:
-        """Get all sentences for comprehensive scanning"""
-        return self.nlp_pipeline._smart_sentence_split(text)
-    
-    def _analyze_sentence_with_enhanced_rules(self, sentence: str, portion_data: Dict = None) -> List[EnhancedRiskItem]:
-        """Enhanced rule-based analysis with better detection"""
-        risks = []
-        sentence_lower = sentence.lower()
         
-        # Check all patterns
-        for pattern_data in self.patterns.get_all_patterns():
-            for pattern in pattern_data["patterns"]:
-                if re.search(pattern, sentence_lower):
-                    risk = EnhancedRiskItem(
-                        sentence=sentence,
-                        risk_category=pattern_data["category"],
-                        risk_level=RiskLevel[pattern_data["risk_level"]],
-                        clause_type=ClauseType[pattern_data["clause_type"]],
-                        description=pattern_data["description"],
-                        concerns=pattern_data["concerns"],
-                        strategies=pattern_data["strategies"],
-                        priority=pattern_data["priority"],
-                        confidence=pattern_data["confidence"],
-                        detection_method="enhanced-rule-based",
-                        specific_risks=portion_data.get('risk_indicators', []) if portion_data else [],
-                        entities=portion_data.get('entities', {}) if portion_data else {}
-                    )
-                    risks.append(risk)
-                    break  # Avoid duplicates for same category
-        
-        # If no patterns matched but NLP flagged as risky, create generic risk
-        if not risks and portion_data and portion_data.get('score', 0) > 0.4:
-            risk = EnhancedRiskItem(
-                sentence=sentence,
-                risk_category="Potential Risk",
-                risk_level=RiskLevel.MEDIUM,
-                clause_type=ClauseType.GENERAL,
-                description="Clause flagged by AI analysis as potentially risky",
-                concerns=["Requires legal review", "May contain unfavorable terms"],
-                strategies=["Review with legal counsel", "Consider negotiating terms"],
-                priority=5,
-                confidence=portion_data.get('score', 0.7),
-                detection_method="ai-flagged",
-                specific_risks=portion_data.get('risk_indicators', []),
-                entities=portion_data.get('entities', {})
-            )
-            risks.append(risk)
-        
-        return risks
-    
     def _scan_full_text_patterns(self, text: str) -> List[EnhancedRiskItem]:
         """Scan full text for patterns that might be missed in sentence analysis"""
         additional_risks = []
@@ -234,51 +161,56 @@ class EnhancedContractAnalyzer:
                 additional_risks.append(risk)
         
         return additional_risks
+        
+    def _get_all_sentences(self, text: str) -> List[str]:
+        """Get all sentences for comprehensive scanning"""
+        return self.nlp_pipeline._smart_sentence_split(text)
     
-    def _deduplicate_risks(self, risks: List[EnhancedRiskItem]) -> List[EnhancedRiskItem]:
-        """Remove duplicate risks based on sentence similarity"""
-        if not risks:
-            return []
+    def _analyze_sentence_with_enhanced_rules(self, sentence: str, portion_data: Dict = None) -> List[EnhancedRiskItem]:
+        """Enhanced rule-based analysis with better detection"""
+        risks = []
+        sentence_lower = sentence.lower()
         
-        unique_risks = []
-        seen_sentences = set()
+        # Check all patterns
+        for pattern_data in self.patterns.get_all_patterns():
+            for pattern in pattern_data["patterns"]:
+                if re.search(pattern, sentence_lower):
+                    risk = EnhancedRiskItem(
+                        sentence=sentence,
+                        risk_category=pattern_data["category"],
+                        risk_level=RiskLevel[pattern_data["risk_level"]],
+                        clause_type=ClauseType[pattern_data["clause_type"]],
+                        description=pattern_data["description"],
+                        concerns=pattern_data["concerns"],
+                        strategies=pattern_data["strategies"],
+                        priority=pattern_data["priority"],
+                        confidence=pattern_data["confidence"],
+                        detection_method="enhanced-rule-based",
+                        specific_risks=portion_data.get('risk_indicators', []) if portion_data else [],
+                        entities=portion_data.get('entities', {}) if portion_data else {}
+                    )
+                    risks.append(risk)
+                    break  # Avoid duplicates for same category
         
-        for risk in risks:
-            # Simple deduplication based on first 100 characters
-            sentence_key = risk.sentence[:100].lower().strip()
-            if sentence_key not in seen_sentences:
-                unique_risks.append(risk)
-                seen_sentences.add(sentence_key)
-        
-        return unique_risks
-    
-    async def _enhance_with_comprehensive_ai(self, risk: EnhancedRiskItem, full_text: str) -> Dict:
-        """Enhanced AI analysis with much more context"""
-        if not self.gemini_client:
-            return self._convert_to_api_format(risk)
-        
-        try:
-            # Extract document context
-            doc_context = self._extract_comprehensive_context(full_text)
-            
-            # Build comprehensive prompt
-            enhanced_prompt = self._build_comprehensive_prompt(risk, doc_context)
-            
-            response = self.gemini_client.models.generate_content(
-                model="gemini-2.0-flash-exp",
-                contents=enhanced_prompt,
-                config={
-                    "temperature": 0.2,
-                    "max_output_tokens": 600  # More tokens for comprehensive analysis
-                }
+        # If no patterns matched but NLP flagged as risky, create generic risk
+        if not risks and portion_data and portion_data.get('score', 0) > 0.4:
+            risk = EnhancedRiskItem(
+                sentence=sentence,
+                risk_category="Potential Risk",
+                risk_level=RiskLevel.MEDIUM,
+                clause_type=ClauseType.GENERAL,
+                description="Clause flagged by AI analysis as potentially risky",
+                concerns=["Requires legal review", "May contain unfavorable terms"],
+                strategies=["Review with legal counsel", "Consider negotiating terms"],
+                priority=5,
+                confidence=portion_data.get('score', 0.7),
+                detection_method="ai-flagged",
+                specific_risks=portion_data.get('risk_indicators', []),
+                entities=portion_data.get('entities', {})
             )
-            
-            ai_enhancement = self._parse_ai_response(response.text)
-            return self._merge_comprehensive_analysis(risk, ai_enhancement, doc_context)
-            
-        except Exception as e:
-            logger.warning(f"AI enhancement failed for {risk.risk_category}: {e}")
-            return self._convert_to_api_format(risk)
+            risks.append(risk)
+        
+        return risks
     
     def _extract_comprehensive_context(self, text: str) -> Dict:
         """Extract comprehensive document context for AI"""
@@ -309,10 +241,120 @@ class EnhancedContractAnalyzer:
         
         return context
     
-    def _build_comprehensive_prompt(self, risk: EnhancedRiskItem, doc_context: Dict) -> str:
-        """Build comprehensive prompt with full context"""
+    def _deduplicate_risks(self, risks: List[EnhancedRiskItem]) -> List[EnhancedRiskItem]:
+        """Remove duplicate risks based on sentence similarity"""
+        if not risks:
+            return []
+        
+        unique_risks = []
+        seen_sentences = set()
+        
+        for risk in risks:
+            # Simple deduplication based on first 100 characters
+            sentence_key = risk.sentence[:100].lower().strip()
+            if sentence_key not in seen_sentences:
+                unique_risks.append(risk)
+                seen_sentences.add(sentence_key)
+        
+        return unique_risks
+
+    async def analyze_contract(self, text: str, user_role: str = "Neutral Observer") -> Dict:
+        """Enhanced analysis with user_role context"""
+        try:
+            logger.info(f"Starting enhanced contract analysis for role: {user_role}")
+            
+            # Step 1: Extract risky portions (no change)
+            risky_portions = self.nlp_pipeline.extract_risky_portions(text, max_portions=20)
+            logger.info(f"Extracted {len(risky_portions)} risky portions")
+            
+            # Step 2: Apply rule-based analysis (no change)
+            all_sentences = self._get_all_sentences(text)
+            rule_based_risks = []
+            
+            for portion in risky_portions:
+                risks = self._analyze_sentence_with_enhanced_rules(portion['sentence'], portion)
+                rule_based_risks.extend(risks)
+            
+            additional_risks = self._scan_full_text_patterns(text)
+            rule_based_risks.extend(additional_risks)
+            
+            unique_risks = self._deduplicate_risks(rule_based_risks)
+            logger.info(f"Found {len(unique_risks)} unique risks after deduplication")
+            
+            # Step 3: Enhanced AI analysis, passing user_role
+            enhanced_risks = []
+            top_risks = sorted(unique_risks, key=lambda x: x.priority, reverse=True)[:5]
+            
+            # Check if any clients are available
+            gemini_available = bool(self.client_pool)
+            
+            for risk in unique_risks:
+                if gemini_available and risk in top_risks:
+                    # Pass the role to the enhancement method
+                    enhanced_risk = await self._enhance_with_comprehensive_ai(risk, text, user_role)
+                    enhanced_risks.append(enhanced_risk)
+                else:
+                    enhanced_risks.append(self._convert_to_api_format(risk))
+            
+            # Step 4: Generate comprehensive results (no change in this part)
+            return {
+                "analyses": enhanced_risks,
+                "summary": self._generate_enhanced_summary(enhanced_risks),
+                "sections": self._extract_enhanced_sections(enhanced_risks),
+                "recommendations": await self._generate_enhanced_recommendations(enhanced_risks, text),
+                "overall_summary": self._create_enhanced_overall_summary(enhanced_risks),
+                "complexity_score": self._calculate_complexity(text),
+                "power_balance": self._assess_power_balance(text),
+                "detection_stats": self._get_detection_statistics(unique_risks)
+            }
+            
+        except Exception as e:
+            logger.error(f"Enhanced analysis failed: {e}")
+            raise
+
+    # ... (Keep _get_all_sentences, _analyze_sentence_with_enhanced_rules, _scan_full_text_patterns, _deduplicate_risks) ...
+
+    async def _enhance_with_comprehensive_ai(self, risk: EnhancedRiskItem, full_text: str, user_role: str) -> Dict:
+        """Enhanced AI analysis now aware of the user's role."""
+        
+        client = self._get_next_gemini_client()
+        if not client:
+            logger.warning("No Gemini client available for enhancement. Falling back to rule-based.")
+            return self._convert_to_api_format(risk)
+        
+        try:
+            # Extract document context (no change)
+            doc_context = self._extract_comprehensive_context(full_text)
+            
+            # Build comprehensive prompt, now WITH user_role
+            enhanced_prompt = self._build_comprehensive_prompt(risk, doc_context, user_role)
+            
+            response = client.models.generate_content(
+                model=settings.LLM_MODEL, # Use model from settings
+                contents=enhanced_prompt,
+                config={
+                    "temperature": 0.2,
+                    "max_output_tokens": 600
+                }
+            )
+            
+            ai_enhancement = self._parse_ai_response(response.text)
+            return self._merge_comprehensive_analysis(risk, ai_enhancement, doc_context)
+            
+        except Exception as e:
+            logger.warning(f"AI enhancement failed for {risk.risk_category} using one client: {e}. Falling back to rule-based.")
+            return self._convert_to_api_format(risk)
+
+    # ... (Keep _extract_comprehensive_context) ...
+
+    def _build_comprehensive_prompt(self, risk: EnhancedRiskItem, doc_context: Dict, user_role: str) -> str:
+        """Build comprehensive prompt with FULL personalization context"""
         return f"""
 LEGAL CONTRACT RISK ANALYSIS
+
+**Your Perspective:**
+You are advising a client whose role in this contract is: **{user_role}**
+All analysis, strategies, and concerns must be from this specific perspective.
 
 **Document Context:**
 - Type: {doc_context.get('doc_type', 'Unknown')}
@@ -331,21 +373,17 @@ Detection: {risk.detection_method}
 **Preliminary Assessment:**
 - {risk.description}
 - Priority Score: {risk.priority}/10
-- Confidence: {risk.confidence:.2f}
 
-**Specific Risk Indicators:**
-{chr(10).join(f'- {indicator}' for indicator in risk.specific_risks) if risk.specific_risks else '- None detected'}
-
-**TASK: Provide detailed analysis in JSON format:**
+**TASK: Provide detailed analysis in JSON format, tailored specifically for your client, the {user_role}.**
 {{
-  "enhanced_description": "Detailed explanation of why this clause is problematic in this document context",
-  "specific_concerns": ["concern1 specific to this document type", "concern2 based on jurisdiction", "concern3 considering amounts/periods"],
-  "negotiation_strategies": ["strategy1 for this document type", "strategy2 considering the financial context", "strategy3"],
-  "alternative_language": "Suggested replacement clause wording",
-  "legal_precedent": "Relevant legal principles or common practices", 
-  "urgency_assessment": "HIGH/MEDIUM/LOW based on risk level and document context",
-  "financial_impact": "Estimated potential financial impact",
-  "mitigation_priority": "1-10 priority for addressing this risk"
+  "enhanced_description": "Detailed explanation of why this clause is problematic *specifically for the {user_role}*",
+  "specific_concerns": ["concern1 specific to the {user_role}'s risk", "concern2 from the {user_role}'s perspective", "concern3"],
+  "negotiation_strategies": ["A primary negotiation strategy for the {user_role}", "A fallback position for the {user_role}", "strategy3"],
+  "alternative_language": "Suggested replacement clause wording that *favors the {user_role}*",
+  "legal_precedent": "Common practices or principles relevant to this risk", 
+  "urgency_assessment": "HIGH/MEDIUM/LOW urgency for the {user_role} to address this",
+  "financial_impact": "Estimated potential financial impact or risk for the {user_role}",
+  "mitigation_priority": "1-10 priority for the {user_role} to fix this"
 }}
 """.strip()
     
@@ -353,6 +391,7 @@ Detection: {risk.detection_method}
         """Keep your existing AI response parsing - it works"""
         try:
             cleaned = response_text.strip()
+            logger.info(cleaned)
             
             # Remove markdown code blocks
             code_block_match = re.search(r'``````', cleaned, re.DOTALL | re.IGNORECASE)
@@ -388,7 +427,7 @@ Detection: {risk.detection_method}
             "priority_score": risk.priority,
             "confidence_score": risk.confidence,
             "legal_concepts": [risk.risk_category],
-            "entities": list(risk.entities.values()) if risk.entities else [],
+            "entities": [{"type": k, "values": v} for k, v in risk.entities.items()] if risk.entities else [],
             "mitigation_strategies": risk.strategies,
             "alternative_language": ai_enhancement.get("alternative_language", ""),
             "cost_implications": ai_enhancement.get("financial_impact", ""),
@@ -411,7 +450,7 @@ Detection: {risk.detection_method}
             "priority_score": risk.priority,
             "confidence_score": risk.confidence,
             "legal_concepts": [risk.risk_category],
-            "entities": list(risk.entities.values()) if risk.entities else [],
+            "entities": [{"type": k, "values": v} for k, v in risk.entities.items()] if risk.entities else [],
             "mitigation_strategies": risk.strategies,
             "alternative_language": "",
             "cost_implications": "",
