@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, status
+from fastapi import APIRouter, HTTPException, UploadFile, File, status, Form
 from models.contract import AnalysisResponse
 from services.pdf.processor import PDFProcessor
 from services.contract.analyzer import EnhancedContractAnalyzer
@@ -11,7 +11,6 @@ router = APIRouter(prefix="/contract-analysis", tags=["Contract Analysis"])
 logger = logging.getLogger(__name__)
 
 # Initialize analyzer as a singleton
-# Initialize enhanced analyzer as a singleton
 _enhanced_analyzer = None
 
 def get_enhanced_analyzer():
@@ -23,10 +22,15 @@ def get_enhanced_analyzer():
     return _enhanced_analyzer
 
 @router.post("/analyze", response_model=AnalysisResponse)
-async def extract_and_analyze_enhanced(file: UploadFile = File(...)):
-    """Extract text from PDF and perform enhanced contract analysis"""
+async def extract_and_analyze_enhanced(
+    user_role: str = Form("Neutral Observer", description="The user's role in the contract (e.g., 'Client', 'Service Provider', 'Landlord')"),
+    file: UploadFile = File(...)
+):
+    """
+    Extract text from PDF and perform enhanced, personalized contract analysis 
+    based on the user's role.
+    """
     
-    # Keep all your existing validation logic
     if not file.content_type or file.content_type != "application/pdf":
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -51,7 +55,7 @@ async def extract_and_analyze_enhanced(file: UploadFile = File(...)):
                 detail="Invalid PDF file format"
             )
         
-        logger.info(f"Processing file: {file.filename}")
+        logger.info(f"Processing file: {file.filename} for user role: {user_role}")
         extracted_text = PDFProcessor.extract_text_from_pdf(file_content)
         
         if not extracted_text.strip():
@@ -60,13 +64,13 @@ async def extract_and_analyze_enhanced(file: UploadFile = File(...)):
                 detail="No readable text found in PDF"
             )
         
-        # Use enhanced analyzer
+        # Use enhanced analyzer and pass the user_role
         analyzer = get_enhanced_analyzer()
-        analysis_result = await analyzer.analyze_contract(extracted_text)
+        analysis_result = await analyzer.analyze_contract(extracted_text, user_role)
         
         processing_time = time.time() - start_time
         
-        # Build response (keep your existing structure)
+        # Build response (structure remains the same)
         response = AnalysisResponse(
             filename=file.filename,
             extracted_text=extracted_text[:2000] + "..." if len(extracted_text) > 2000 else extracted_text,
