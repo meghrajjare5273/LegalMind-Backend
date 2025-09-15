@@ -7,7 +7,7 @@ class Settings(BaseSettings):
     ENV: str = "development"
     
     # Change this to accept a comma-separated string of keys
-    GEMINI_API_KEYS: str = Field("AIzaSyBcVvgdrzeggnBxx1QP3L63_heST1ctkB8,AIzaSyBEtbjYNA3AmPbe8DLUDpIUaWP9cAX0vu8,AIzaSyA_9dbei3n2RhpymDNW04RT-3_e5ro2muc,AIzaSyCWqH4CpR1EfWcmF-yiq26xrwxyooPcrDs", alias="GEMINI_API_KEYS") 
+    GEMINI_API_KEYS: str = Field("", alias="GEMINI_API_KEYS") 
     
     LLM_MODEL: str = "gemini-1.5-flash"
     MAX_CHUNK_TOKENS: int = 1_000
