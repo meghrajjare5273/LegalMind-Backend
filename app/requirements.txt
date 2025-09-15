@@ -21,8 +21,7 @@ sentence-transformers==2.2.2  # latest on PyPI (no newer release)
 
 # Vector database (choose one)
 pinecone-client==2.2.4  # still current
-chromadb==0.4.15        # still current
-faiss-cpu==1.7.4        # still current
+faiss-cpu==1.12.0        # still current
 
 # Caching
 cachetools==5.3.3       # still current
