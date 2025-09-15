@@ -12,18 +12,22 @@ PyMuPDF==1.25.5
 # File uploads
 python-multipart==0.0.20
 
-# NLP and ML
+# Enhanced NLP and ML
 nltk==3.8.1
 scikit-learn==1.4.2
 numpy==1.26.4
+sentence-transformers==2.2.2
+
+# Vector database (choose one)
+pinecone-client==2.2.4  # Cloud option
+chromadb==0.4.15       # Local option
+faiss-cpu==1.7.4       # Local option
 
 # Caching
 cachetools==5.3.3
 
-# Optional: Google Gemini AI integration
+# Google Gemini AI integration
 google-genai==1.17.0
 
-# Logging (included with Python, but you use it extensively)
-# No need to specify 'logging' in requirements.txt
-
-# If requirements ever expand to include docstring testing, add pytest, etc.
+# Additional utilities
+tqdm==4.66.1
