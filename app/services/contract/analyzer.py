@@ -352,6 +352,8 @@ class EnhancedContractAnalyzer:
         return f"""
 LEGAL CONTRACT RISK ANALYSIS
 
+**IMPORTANT: Respond ONLY with valid JSON. Escape all quotes inside string values using backslash (\\").**
+
 **Your Perspective:**
 You are advising a client whose role in this contract is: **{user_role}**
 All analysis, strategies, and concerns must be from this specific perspective.
@@ -374,6 +376,9 @@ Detection: {risk.detection_method}
 - {risk.description}
 - Priority Score: {risk.priority}/10
 
+**CRITICAL: Return ONLY valid JSON. Use \\" for quotes inside values. Example:**
+{{"key": "Value with \\"quoted text\\" inside"}}
+
 **TASK: Provide detailed analysis in JSON format, tailored specifically for your client, the {user_role}.**
 {{
   "enhanced_description": "Detailed explanation of why this clause is problematic *specifically for the {user_role}*",
@@ -388,32 +393,168 @@ Detection: {risk.detection_method}
 """.strip()
     
     def _parse_ai_response(self, response_text: str) -> dict:
-        """Keep your existing AI response parsing - it works"""
+        """Enhanced AI response parsing with detailed logging and error recovery"""
         try:
             cleaned = response_text.strip()
-            logger.info(cleaned)
+            logger.info(f"Original response length: {len(response_text)} characters")
+            logger.debug(f"Original response: {response_text}")
             
             # Remove markdown code blocks
             code_block_match = re.search(r'``````', cleaned, re.DOTALL | re.IGNORECASE)
             if code_block_match:
                 cleaned = code_block_match.group(1)
+                logger.info("Removed markdown code blocks")
             
             # Find JSON object
             json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if json_match:
                 cleaned = json_match.group(0)
+                logger.info("Extracted JSON object from response")
             
-            parsed = json.loads(cleaned)
+            logger.debug(f"Cleaned response: {cleaned}")
             
-            if not isinstance(parsed, dict):
-                return {}
-                
-            return parsed
+            # Multiple parsing strategies
+            parsing_strategies = [
+                ("direct", lambda x: x),
+                ("escape_quotes", self._escape_inner_quotes),
+                ("fix_common_issues", self._fix_common_json_issues),
+                ("aggressive_fix", self._aggressive_json_fix)
+            ]
+            
+            for strategy_name, strategy_func in parsing_strategies:
+                try:
+                    processed_json = strategy_func(cleaned)
+                    parsed = json.loads(processed_json)
+                    
+                    if isinstance(parsed, dict):
+                        logger.info(f"Successfully parsed JSON using strategy: {strategy_name}")
+                        return parsed
+                        
+                except json.JSONDecodeError as e:
+                    logger.warning(f"Strategy '{strategy_name}' failed: {e.msg} at line {e.lineno} col {e.colno} (pos {e.pos})")
+                    # Log the problematic area
+                    if hasattr(e, 'pos') and e.pos < len(processed_json):
+                        start = max(0, e.pos - 50)
+                        end = min(len(processed_json), e.pos + 50)
+                        problem_area = processed_json[start:end]
+                        logger.warning(f"Problem area: ...{problem_area}...")
+                    continue
+                except Exception as e:
+                    logger.warning(f"Strategy '{strategy_name}' failed with exception: {e}")
+                    continue
+            
+            logger.error("All parsing strategies failed")
+            return {}
             
         except Exception as e:
-            logger.warning(f"Failed to parse AI response: {e}")
+            logger.error(f"Critical error in AI response parsing: {e}")
             return {}
+
+    def _escape_inner_quotes(self, json_str: str) -> str:
+        """Escape unescaped double quotes inside string values"""
+        
+        def fix_string_value(match):
+            full_match = match.group(0)
+            key = match.group(1)
+            value = match.group(2)
+            
+            # Escape any unescaped double quotes in the value
+            # But preserve already escaped quotes
+            escaped_value = re.sub(r'(?<!\\)"', '\\"', value)
+            
+            return f'"{key}": "{escaped_value}"'
+        
+        # Match key-value pairs: "key": "value with possible "quotes""
+        pattern = r'"([^"]+)":\s*"((?:[^"\\]|\\.)*)(?<!\\)"'
+        fixed = re.sub(pattern, fix_string_value, json_str)
+        
+        return fixed
+
+    def _fix_common_json_issues(self, json_str: str) -> str:
+        """Fix common JSON formatting issues"""
+        
+        # Remove trailing commas before closing brackets
+        json_str = re.sub(r',(\s*[}\]])', r'\1', json_str)
+        
+        # Fix spacing issues
+        json_str = re.sub(r':\s*"([^"]*?)"\s*"', r': "\1"', json_str)
+        
+        # Handle the specific alternative_language issue
+        json_str = re.sub(
+            r'"alternative_language":\s*"([^"]*)"([^"]*)"([^"]*)"',
+            r'"alternative_language": "\1\"\2\"\3"',
+            json_str,
+            flags=re.DOTALL
+        )
+        
+        return json_str
+
+    def _aggressive_json_fix(self, json_str: str) -> str:
+        """Aggressive JSON repair as last resort"""
+        
+        # Replace all unescaped quotes with escaped ones in string values
+        # This is more aggressive and might over-escape, but should work as fallback
+        
+        lines = json_str.split('\n')
+        fixed_lines = []
+        
+        for line in lines:
+            # Skip lines that are just structural (brackets, commas)
+            if line.strip() in ['{', '}', '[', ']', ',']:
+                fixed_lines.append(line)
+                continue
+            
+            # For lines with key-value pairs, fix the value part
+            if ':' in line and '"' in line:
+                parts = line.split(':', 1)
+                if len(parts) == 2:
+                    key_part = parts[0]
+                    value_part = parts[1].strip()
+                    
+                    # If value part starts and ends with quotes, fix inner quotes
+                    if value_part.startswith('"') and value_part.rstrip(',').endswith('"'):
+                        # Extract the inner value
+                        inner_value = value_part[1:value_part.rstrip(',').rfind('"')]
+                        # Escape quotes in inner value
+                        escaped_inner = inner_value.replace('"', '\\"')
+                        # Reconstruct
+                        trailing_comma = ',' if value_part.rstrip().endswith(',') else ''
+                        fixed_value = f'"{escaped_inner}"{trailing_comma}'
+                        line = f"{key_part}: {fixed_value}"
+            
+            fixed_lines.append(line)
+        
+        return '\n'.join(fixed_lines)
     
+
+    def _log_parsing_details(self, response_text: str, error: Exception):
+        """Enhanced logging for parsing failures"""
+        logger.error("=== JSON PARSING FAILURE ANALYSIS ===")
+        logger.error(f"Response length: {len(response_text)}")
+        logger.error(f"Error type: {type(error).__name__}")
+        logger.error(f"Error message: {str(error)}")
+        
+        if hasattr(error, 'pos'):
+            pos = error.pos
+            start = max(0, pos - 100)
+            end = min(len(response_text), pos + 100)
+            context = response_text[start:end]
+            logger.error(f"Error position: {pos}")
+            logger.error(f"Context around error: ...{context}...")
+        
+        # Check for common issues
+        quote_count = response_text.count('"')
+        escaped_quote_count = response_text.count('\\"')
+        logger.error(f"Total quotes: {quote_count}, Escaped quotes: {escaped_quote_count}")
+        
+        # Find potential problematic lines
+        lines = response_text.split('\n')
+        for i, line in enumerate(lines, 1):
+            if '"alternative_language"' in line or line.count('"') % 2 != 0:
+                logger.error(f"Suspicious line {i}: {line}")
+
+
+            
     def _merge_comprehensive_analysis(self, risk: EnhancedRiskItem, ai_enhancement: Dict, doc_context: Dict) -> Dict:
         """Merge all analysis components"""
         return {
