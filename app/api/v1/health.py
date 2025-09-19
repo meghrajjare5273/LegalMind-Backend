@@ -15,7 +15,7 @@ async def health_check():
             "services": {
                 "contract_analysis": "available",
                 "rag_chat": "available",
-                "gemini_ai": "available" if settings.GEMINI_API_KEY else "unavailable",
+                "gemini_ai": "available" if settings.GEMINI_API_KEYS else "unavailable",
                 "pinecone": "available" if settings.PINECONE_API_KEY else "unavailable"
             },
             "environment": settings.ENV

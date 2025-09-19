@@ -4,20 +4,69 @@ import logging
 import numpy as np
 from typing import List, Dict, Tuple
 from collections import Counter
+import os
 from sklearn.feature_extraction.text import TfidfVectorizer
 
-# Keep your existing imports
-try:
-    nltk.data.find('tokenizers/punkt')
-    nltk.data.find('corpora/stopwords')
-except LookupError:
-    nltk.download('punkt', quiet=True)
-    nltk.download('stopwords', quiet=True)
+# # Keep your existing imports
+# try:
+#     nltk.data.find('tokenizers/punkt')
+#     nltk.data.find('corpora/stopwords')
+# except LookupError:
+#     nltk.download('punkt', quiet=True)
+#     nltk.download('stopwords', quiet=True)
 
-from nltk.corpus import stopwords
-from nltk.tokenize import sent_tokenize, word_tokenize
-
+# from nltk.corpus import stopwords
+# from nltk.tokenize import sent_tokenize, word_tokenize
 logger = logging.getLogger(__name__)
+
+def setup_nltk_data():
+    """Setup NLTK data with proper error handling for production deployment"""
+    
+    # Set NLTK data path to a persistent location
+    nltk_data_dir = os.path.join(os.getcwd(), 'nltk_data')
+    if not os.path.exists(nltk_data_dir):
+        os.makedirs(nltk_data_dir)
+    
+    # Add the custom path to NLTK's search paths
+    if nltk_data_dir not in nltk.data.path:
+        nltk.data.path.append(nltk_data_dir)
+    
+    # Download required NLTK data
+    required_data = [
+        ('punkt_tab', 'tokenizers/punkt_tab'),  # Updated tokenizer
+        ('stopwords', 'corpora/stopwords')
+    ]
+    
+    for data_name, data_path in required_data:
+        try:
+            nltk.data.find(data_path)
+            logger.info(f"NLTK data '{data_name}' already available")
+        except LookupError:
+            try:
+                logger.info(f"Downloading NLTK data: {data_name}")
+                nltk.download(data_name, download_dir=nltk_data_dir, quiet=True)
+                logger.info(f"Successfully downloaded NLTK data: {data_name}")
+            except Exception as e:
+                logger.error(f"Failed to download NLTK data '{data_name}': {str(e)}")
+                # Fallback: try without specifying download directory
+                try:
+                    nltk.download(data_name, quiet=True)
+                    logger.info(f"Downloaded NLTK data '{data_name}' to default location")
+                except Exception as fallback_error:
+                    logger.error(f"Complete failure downloading '{data_name}': {str(fallback_error)}")
+
+# Call this function during module initialization
+setup_nltk_data()
+
+
+# Replace the existing try/except block with:
+try:
+    from nltk.tokenize import sent_tokenize, word_tokenize
+    from nltk.corpus import stopwords
+except ImportError as e:
+    logger.error(f"Failed to import NLTK components: {str(e)}")
+    raise
+
 
 class ImprovedNLPPipeline:
     """Improved NLP pipeline that enhances rather than replaces existing functionality"""
