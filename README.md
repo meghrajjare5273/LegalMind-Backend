@@ -1,27 +1,38 @@
-# Deploy FastAPI on Render
+# Empty Encore TS Template
 
-Use this repo as a template to deploy a Python [FastAPI](https://fastapi.tiangolo.com) service on Render.
+## Developing locally
 
-See https://render.com/docs/deploy-fastapi or follow the steps below:
+When you have [installed Encore](https://encore.dev/docs/ts/install), you can create a new Encore application and clone this example with this command.
 
-## Manual Steps
+```bash
+encore app create my-app-name --example=ts/empty
+```
 
-1. You may use this repository directly or [create your own repository from this template](https://github.com/render-examples/fastapi/generate) if you'd like to customize the code.
-2. Create a new Web Service on Render.
-3. Specify the URL to your new repository or this repository.
-4. Render will automatically detect that you are deploying a Python service and use `pip` to download the dependencies.
-5. Specify the following as the Start Command.
+## Running locally
+```bash
+encore run
+```
 
-    ```shell
-    uvicorn main:app --host 0.0.0.0 --port $PORT
-    ```
+While `encore run` is running, open <http://localhost:9400/> to view Encore's [local developer dashboard](https://encore.dev/docs/ts/observability/dev-dash).
 
-6. Click Create Web Service.
+## Deployment
 
-Or simply click:
+Deploy your application to a staging environment in Encore's free development cloud:
 
-[![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/render-examples/fastapi)
+```bash
+git add -A .
+git commit -m 'Commit message'
+git push encore
+```
 
-## Thanks
+Then head over to the [Cloud Dashboard](https://app.encore.dev) to monitor your deployment and find your production URL.
 
-Thanks to [Harish](https://harishgarg.com) for the [inspiration to create a FastAPI quickstart for Render](https://twitter.com/harishkgarg/status/1435084018677010434) and for some sample code!
+From there you can also connect your own AWS or GCP account to use for deployment.
+
+Now off you go into the clouds!
+
+## Testing
+
+```bash
+encore test
+```
