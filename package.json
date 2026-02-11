@@ -6,10 +6,17 @@
   "license": "MPL-2.0",
   "type": "module",
   "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
     "@types/node": "^20.5.7",
     "typescript": "^5.2.2"
   },
   "dependencies": {
-    "encore.dev": "^1.54.0"
+    "@ai-sdk/google": "^3.0.24",
+    "ai": "^6.0.79",
+    "encore.dev": "^1.54.0",
+    "jsonwebtoken": "^9.0.3",
+    "pdfjs-dist": "^5.4.624",
+    "wink-eng-lite-web-model": "^1.8.1",
+    "wink-nlp": "^2.4.0"
   }
 }
