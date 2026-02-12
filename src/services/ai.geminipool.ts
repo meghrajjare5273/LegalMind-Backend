@@ -1,78 +1,61 @@
-// services/ai/gemini-pool.ts
+// services/ai.geminipool.ts
 import { createGoogleGenerativeAI } from "@ai-sdk/google";
 import { generateText } from "ai";
-import { secret } from "encore.dev/config";
+// import { secret } from "encore.dev/config";
 import { retryWithBackoff } from "@/utils/helpers";
+import { GeminiAPIKey } from "@/contract-analysis/secrets";
 
-// Gemini API keys from environment (comma-separated)
-const geminiKeysSecret = secret("GeminiAPIKeys");
+// const geminiKeysSecret = secret("GeminiAPIKeys");
 
-/**
- * Gemini client pool with automatic rotation
- * Uses Vercel AI SDK for streaming and advanced features
- */
 export class GeminiClientPool {
   private clients: any[] = [];
   private currentIndex = 0;
-  private apiKeys: string[] = [];
+  private initialized = false;
 
-  constructor() {
-    this.initializePool();
-  }
-
-  /**
-   * Initialize client pool from API keys
-   */
   private initializePool(): void {
-    const keysString = geminiKeysSecret();
+    const keysString = GeminiAPIKey;
 
     if (!keysString) {
       console.warn("GeminiAPIKeys not configured. AI enhancement disabled.");
       return;
     }
 
-    // Split comma-separated keys and trim whitespace
-    this.apiKeys = keysString
+    const apiKeys = keysString
       .split(",")
       .map((key) => key.trim())
       .filter((key) => key.length > 0);
 
-    if (this.apiKeys.length === 0) {
+    if (apiKeys.length === 0) {
       console.warn("No valid Gemini API keys found. AI enhancement disabled.");
       return;
     }
 
-    // Create clients for each API key
-    this.clients = this.apiKeys.map((apiKey) =>
+    this.clients = apiKeys.map((apiKey) =>
       createGoogleGenerativeAI({ apiKey }),
     );
+    this.initialized = true;
 
     console.log(`Initialized ${this.clients.length} Gemini clients in pool`);
   }
 
-  /**
-   * Get next client in rotation
-   */
-  private getNextClient(): any | null {
-    if (this.clients.length === 0) {
-      return null;
+  private ensureInitialized(): void {
+    if (!this.initialized) {
+      this.initializePool();
     }
+  }
 
+  private getNextClient(): any | null {
+    if (this.clients.length === 0) return null;
     const client = this.clients[this.currentIndex];
     this.currentIndex = (this.currentIndex + 1) % this.clients.length;
     return client;
   }
 
-  /**
-   * Check if pool is available
-   */
   isAvailable(): boolean {
+    this.ensureInitialized();
     return this.clients.length > 0;
   }
 
-  /**
-   * Generate text using Gemini with rotation and retry
-   */
   async generateText(
     prompt: string,
     options: {
@@ -81,6 +64,8 @@ export class GeminiClientPool {
       model?: string;
     } = {},
   ): Promise<string> {
+    this.ensureInitialized();
+
     if (!this.isAvailable()) {
       throw new Error("Gemini client pool not available");
     }
@@ -91,13 +76,9 @@ export class GeminiClientPool {
       model = "gemini-1.5-flash",
     } = options;
 
-    // Retry with exponential backoff
     return retryWithBackoff(async () => {
       const client = this.getNextClient();
-
-      if (!client) {
-        throw new Error("No Gemini client available");
-      }
+      if (!client) throw new Error("No Gemini client available");
 
       const result = await generateText({
         model: client(model),
@@ -110,14 +91,8 @@ export class GeminiClientPool {
     }, 3);
   }
 
-  /**
-   * Get pool statistics
-   */
-  getStats(): {
-    totalClients: number;
-    currentIndex: number;
-    isAvailable: boolean;
-  } {
+  getStats() {
+    this.ensureInitialized();
     return {
       totalClients: this.clients.length,
       currentIndex: this.currentIndex,
@@ -126,5 +101,4 @@ export class GeminiClientPool {
   }
 }
 
-// Export singleton instance
 export const geminiPool = new GeminiClientPool();

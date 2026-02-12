@@ -1,5 +1,6 @@
 // services/pdf/processor.ts
-import * as pdfjsLib from "pdfjs-dist";
+// import * as pdfjsLib from "pdfjs-dist";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { APIError } from "encore.dev/api";
 
 /**
@@ -37,7 +38,7 @@ export class PDFProcessor {
       }
 
       // Load PDF document
-      const loadingTask = pdfjsLib.getDocument({
+      const loadingTask = getDocument({
         data: new Uint8Array(buffer),
         useSystemFonts: true,
         standardFontDataUrl: undefined,
@@ -107,7 +108,7 @@ export class PDFProcessor {
     creationDate?: string;
   }> {
     try {
-      const loadingTask = pdfjsLib.getDocument({
+      const loadingTask = getDocument({
         data: new Uint8Array(buffer),
       });
 

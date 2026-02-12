@@ -1,11 +1,5 @@
 // api.ts
-import {
-  api,
-  APIError,
-  ErrCode,
-  RawRequest,
-  RawResponse,
-} from "encore.dev/api";
+import { api, APIError, ErrCode } from "encore.dev/api";
 import { getAuthData } from "~encore/auth";
 import { rateLimiter } from "./rate-limiter";
 import { PDFProcessor } from "@/services/pdf.processor";
@@ -61,17 +55,17 @@ export const analyzeContract = api.raw(
     method: "POST",
     path: "/contract-analysis/analyze",
     expose: true,
-    auth: true,
+    auth: false,
   },
   async (req, resp): Promise<void> => {
     try {
-      const auth = getAuthData();
-      if (!auth) {
-        throw APIError.unauthenticated("Authentication required");
-      }
+      //   const auth = getAuthData();
+      //   if (!auth) {
+      //     throw APIError.unauthenticated("Authentication required");
+      //   }
 
       // Rate limiting
-      rateLimiter.checkRateLimit(auth);
+      //   rateLimiter.checkRateLimit(auth);
 
       const contentType = req.headers["content-type"] || "";
       if (!contentType.startsWith("multipart/form-data")) {
