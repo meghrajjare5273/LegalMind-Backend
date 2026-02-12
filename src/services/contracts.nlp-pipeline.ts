@@ -191,7 +191,7 @@ export class NLPPipeline {
     // Extract potential party names (proper nouns)
     const properNouns = doc
       .tokens()
-      .filter((t: any) => t.out(t.its.pos) === "PROPN")
+      .filter((t: any) => t.out(this.nlp.its.pos) === "PROPN")
       .out();
 
     if (properNouns.length > 0) {
