@@ -2,14 +2,74 @@
 import { RiskLevel, ClauseType, type ContractPattern } from "@/models/types";
 
 /**
+ * Pre-compiled regex pattern for performance
+ */
+interface CompiledPattern extends ContractPattern {
+  compiledPatterns: RegExp[];
+}
+
+/**
  * Comprehensive contract risk patterns
  * Based on legal analysis and common contract pitfalls
+ *
+ * Patterns are pre-compiled at load time for better performance
  */
-export class ContractPatterns {
+class PatternRegistry {
+  private compiledPatterns: CompiledPattern[] = [];
+  private initialized = false;
+
   /**
-   * Get all contract patterns
+   * Initialize and compile all patterns
    */
-  static getAllPatterns(): ContractPattern[] {
+  private initialize(): void {
+    if (this.initialized) return;
+
+    const rawPatterns = this.getRawPatterns();
+
+    this.compiledPatterns = rawPatterns.map((pattern) => ({
+      ...pattern,
+      compiledPatterns: pattern.patterns.map((p) => new RegExp(p, "i")),
+    }));
+
+    this.initialized = true;
+  }
+
+  /**
+   * Get all compiled patterns
+   */
+  getAllPatterns(): CompiledPattern[] {
+    this.initialize();
+    return this.compiledPatterns;
+  }
+
+  /**
+   * Get patterns by category
+   */
+  getPatternsByCategory(category: string): CompiledPattern[] {
+    this.initialize();
+    return this.compiledPatterns.filter((p) => p.category === category);
+  }
+
+  /**
+   * Get patterns by risk level
+   */
+  getPatternsByRiskLevel(riskLevel: RiskLevel): CompiledPattern[] {
+    this.initialize();
+    return this.compiledPatterns.filter((p) => p.riskLevel === riskLevel);
+  }
+
+  /**
+   * Get high-priority patterns (priority >= 7)
+   */
+  getHighPriorityPatterns(): CompiledPattern[] {
+    this.initialize();
+    return this.compiledPatterns.filter((p) => p.priority >= 7);
+  }
+
+  /**
+   * Raw pattern definitions
+   */
+  private getRawPatterns(): ContractPattern[] {
     return [
       // CRITICAL RISKS
       {
@@ -291,25 +351,7 @@ export class ContractPatterns {
       },
     ];
   }
-
-  /**
-   * Get patterns by category
-   */
-  static getPatternsByCategory(category: string): ContractPattern[] {
-    return this.getAllPatterns().filter((p) => p.category === category);
-  }
-
-  /**
-   * Get patterns by risk level
-   */
-  static getPatternsByRiskLevel(riskLevel: RiskLevel): ContractPattern[] {
-    return this.getAllPatterns().filter((p) => p.riskLevel === riskLevel);
-  }
-
-  /**
-   * Get high-priority patterns (priority >= 7)
-   */
-  static getHighPriorityPatterns(): ContractPattern[] {
-    return this.getAllPatterns().filter((p) => p.priority >= 7);
-  }
 }
+
+// Export singleton instance
+export const ContractPatterns = new PatternRegistry();

@@ -9,9 +9,12 @@ interface CacheEntry<T> {
 /**
  * In-memory cache with TTL support
  * Used for caching analysis results
+ * 
+ * Note: This is a simple in-memory cache suitable for single-instance deployments.
+ * For multi-instance deployments, consider using Redis or a distributed cache.
  */
-class CacheManager<T = any> {
-  private cache = new Map<string, CacheEntry<T>>();
+class CacheManager {
+  private cache = new Map<string, CacheEntry<unknown>>();
   private readonly defaultTTL = 3600 * 1000; // 1 hour in milliseconds
 
   /**
@@ -26,8 +29,8 @@ class CacheManager<T = any> {
   /**
    * Get item from cache
    */
-  get(key: string): T | null {
-    const entry = this.cache.get(key);
+  get<T>(key: string): T | null {
+    const entry = this.cache.get(key) as CacheEntry<T> | undefined;
 
     if (!entry) {
       return null;
@@ -45,7 +48,7 @@ class CacheManager<T = any> {
   /**
    * Set item in cache with TTL
    */
-  set(key: string, data: T, ttlMs?: number): void {
+  set<T>(key: string, data: T, ttlMs?: number): void {
     const expiresAt = Date.now() + (ttlMs || this.defaultTTL);
     this.cache.set(key, { data, expiresAt });
   }

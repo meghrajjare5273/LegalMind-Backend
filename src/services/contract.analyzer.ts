@@ -13,22 +13,39 @@ import { ContractPatterns } from "@/services/contracts.patterns";
 import { NLPPipeline } from "@/services/contracts.nlp-pipeline";
 import { geminiPool } from "@/services/ai.geminipool";
 import { truncate, deduplicateByKey } from "@/utils/helpers";
+import { cache } from "@/utils/cache";
 
 interface AnalyzeOptions {
   userRole: string;
   filename: string;
+  userId?: string; // Optional user ID for tracking/logging
+}
+
+/**
+ * Result of AI enhancement for a single risk
+ */
+interface AIEnhancementResult {
+  risk: EnhancedRiskItem;
+  enhancement: AIEnhancement | null;
+  error: Error | null;
 }
 
 /**
  * Main contract analyzer:
  * - PDF text is already extracted when this is called
  * - Combines rule-based + NLP + (optional) Gemini enhancement
+ * - Uses caching for repeated analyses
  */
 export class ContractAnalyzer {
   private readonly nlp: NLPPipeline;
+  private static nlpInstance: NLPPipeline | null = null;
 
   constructor() {
-    this.nlp = new NLPPipeline();
+    // Use singleton NLP instance to avoid reloading model
+    if (!ContractAnalyzer.nlpInstance) {
+      ContractAnalyzer.nlpInstance = new NLPPipeline();
+    }
+    this.nlp = ContractAnalyzer.nlpInstance;
   }
 
   /**
@@ -46,13 +63,29 @@ export class ContractAnalyzer {
       throw new Error("No readable text found in contract");
     }
 
+    // Check cache for identical document
+    const documentHash = cache.generateKey(cleaned);
+    const cacheKey = `analysis:${documentHash}:${options.userRole}`;
+    const cached = cache.get<AnalysisResponse>(cacheKey);
+
+    if (cached) {
+      console.log(
+        `[Analyzer] Cache hit for document hash: ${documentHash.slice(0, 8)}...`,
+      );
+      return {
+        ...cached,
+        filename: options.filename, // Always use current filename
+        processingTime: (Date.now() - start) / 1000,
+      };
+    }
+
     // Step 1: NLP risky portions
     const riskyPortions = this.nlp.extractRiskyPortions(cleaned, 20);
 
-    // Step 2: Rule-based pattern scan
+    // Step 2: Rule-based pattern scan (uses pre-compiled patterns)
     const ruleBasedRisks = this.runRuleBasedAnalysis(cleaned, riskyPortions);
 
-    // Step 3: Optional AI enhancement via Gemini
+    // Step 3: Optional AI enhancement via Gemini (parallel processing)
     const enhancedRisks = await this.enhanceRisksWithAI(
       ruleBasedRisks,
       cleaned,
@@ -86,28 +119,32 @@ export class ContractAnalyzer {
       detectionStats,
     };
 
+    // Cache the result (without filename-specific data)
+    cache.set(cacheKey, response, 30 * 60 * 1000); // 30 minutes TTL
+
     return response;
   }
 
   /**
    * Rule-based analysis over full text + risky portions
+   * Uses pre-compiled regex patterns for better performance
    */
   private runRuleBasedAnalysis(
     fullText: string,
     portions: ReturnType<NLPPipeline["extractRiskyPortions"]>,
   ): EnhancedRiskItem[] {
+    // Get pre-compiled patterns
     const patterns = ContractPatterns.getAllPatterns();
     const allSentences = this.nlp.smartSentenceSplit(fullText);
     const risks: EnhancedRiskItem[] = [];
 
-    // 1) Pattern-based scan over all sentences
+    // 1) Pattern-based scan over all sentences using pre-compiled regex
     for (const sentence of allSentences) {
       const lower = sentence.toLowerCase();
 
       for (const pat of patterns) {
-        const matched = pat.patterns.some((re) =>
-          new RegExp(re, "i").test(lower),
-        );
+        // Use pre-compiled patterns instead of creating new RegExp each time
+        const matched = pat.compiledPatterns.some((regex) => regex.test(lower));
         if (!matched) continue;
 
         risks.push({
@@ -169,6 +206,7 @@ export class ContractAnalyzer {
 
   /**
    * Enhance a subset of risks with Gemini (if available)
+   * Uses parallel processing with Promise.allSettled for better performance
    */
   private async enhanceRisksWithAI(
     risks: EnhancedRiskItem[],
@@ -185,9 +223,8 @@ export class ContractAnalyzer {
       .sort((a, b) => b.priority - a.priority)
       .slice(0, 8);
 
-    const enhanced: EnhancedRiskItem[] = [...risks];
-
-    for (const risk of toEnhance) {
+    // Process AI enhancements in parallel using Promise.allSettled
+    const enhancementPromises = toEnhance.map(async (risk) => {
       try {
         const prompt = this.buildPrompt(risk, fullText, userRole);
         const text = await geminiPool.generateText(prompt, {
@@ -197,19 +234,48 @@ export class ContractAnalyzer {
         });
 
         const parsed = this.parseAIResponse(text);
-        const merged = this.mergeAIEnhancement(risk, parsed);
-
-        // Replace in list
-        const idx = enhanced.findIndex(
-          (r) =>
-            r.sentence === risk.sentence &&
-            r.riskCategory === risk.riskCategory,
+        return {
+          risk,
+          enhancement: parsed,
+          error: null,
+        } as AIEnhancementResult;
+      } catch (error) {
+        // Log error but don't throw - return null enhancement
+        console.warn(
+          `[Analyzer] AI enhancement failed for risk "${risk.riskCategory}":`,
+          (error as Error).message,
         );
-        if (idx >= 0) enhanced[idx] = merged;
-      } catch {
-        // Swallow AI errors; keep original risk
+        return {
+          risk,
+          enhancement: null,
+          error: error as Error,
+        } as AIEnhancementResult;
+      }
+    });
+
+    // Wait for all enhancements to complete (parallel)
+    const enhancementResults = await Promise.allSettled(enhancementPromises);
+
+    // Create a map of enhancements for quick lookup
+    const enhancementMap = new Map<string, AIEnhancement>();
+
+    for (const result of enhancementResults) {
+      if (result.status === "fulfilled" && result.value.enhancement) {
+        const key = `${result.value.risk.sentence}|${result.value.risk.riskCategory}`;
+        enhancementMap.set(key, result.value.enhancement);
       }
     }
+
+    // Apply enhancements to risks
+    const enhanced: EnhancedRiskItem[] = risks.map((risk) => {
+      const key = `${risk.sentence}|${risk.riskCategory}`;
+      const enhancement = enhancementMap.get(key);
+
+      if (enhancement) {
+        return this.mergeAIEnhancement(risk, enhancement);
+      }
+      return risk;
+    });
 
     return enhanced;
   }
@@ -434,7 +500,7 @@ Important:
     critical: number,
     high: number,
     medium: number,
-    low: number,
+    _low: number,
   ): string {
     if (critical > 0) return "CRITICAL";
     if (high > 2 || (high > 0 && medium > 3)) return "HIGH";
@@ -498,68 +564,101 @@ Important:
     summary: RiskSummary,
     risks: EnhancedRiskItem[],
   ): string[] {
-    const recs: string[] = [];
+    const recommendations: string[] = [];
 
+    // Critical risks
     if (summary.criticalRiskCount > 0) {
-      recs.push(
-        "Address all CRITICAL risks before signing. These may materially impact your legal and financial position.",
+      recommendations.push(
+        `Address ${summary.criticalRiskCount} critical risk(s) before signing this contract.`,
       );
     }
+
+    // High risks
     if (summary.highRiskCount > 0) {
-      recs.push(
-        "Focus negotiation efforts on HIGH risk clauses, especially around liability, termination, and penalties.",
+      recommendations.push(
+        `Review and negotiate the ${summary.highRiskCount} high-risk clause(s) identified.`,
       );
     }
 
-    if (risks.some((r) => r.clauseType === ClauseType.LIABILITY)) {
-      recs.push(
-        "Consider adding liability caps aligned with industry standards and excluding indirect or consequential damages.",
-      );
+    // Top priority items
+    const topPriority = risks.filter((r) => r.priority >= 8).slice(0, 3);
+
+    for (const risk of topPriority) {
+      if (risk.strategies.length > 0) {
+        recommendations.push(`${risk.riskCategory}: ${risk.strategies[0]}`);
+      }
     }
-    if (risks.some((r) => r.clauseType === ClauseType.TERMINATION)) {
-      recs.push(
-        "Ensure termination clauses include reasonable notice periods and clear 'for cause' conditions.",
+
+    // General recommendation
+    if (summary.totalRisks > 5) {
+      recommendations.push(
+        "Consider having a legal professional review this contract due to the number of identified risks.",
       );
     }
 
-    if (recs.length === 0) {
-      recs.push(
-        "No major issues detected, but have a qualified lawyer review the contract before signing.",
-      );
-    }
-
-    return recs;
+    return recommendations.slice(0, 6);
   }
 
   private buildOverallSummary(summary: RiskSummary): string {
-    return `Overall, the contract is assessed as ${summary.overallRiskLevel} risk with ${summary.totalRisks} notable risk item(s), including ${summary.criticalRiskCount} critical and ${summary.highRiskCount} high-risk clauses.`;
+    const parts: string[] = [];
+
+    parts.push(
+      `Found ${summary.totalRisks} potential risk(s) in this contract.`,
+    );
+
+    if (summary.criticalRiskCount > 0) {
+      parts.push(
+        `${summary.criticalRiskCount} critical risk(s) require immediate attention.`,
+      );
+    }
+
+    if (summary.highRiskCount > 0) {
+      parts.push(`${summary.highRiskCount} high-risk clause(s) identified.`);
+    }
+
+    if (summary.mediumRiskCount > 0) {
+      parts.push(`${summary.mediumRiskCount} moderate concern(s) noted.`);
+    }
+
+    parts.push(`Overall risk level: ${summary.overallRiskLevel}.`);
+
+    return parts.join(" ");
   }
 
   private estimatePowerBalance(risks: EnhancedRiskItem[]): number {
-    // Simple heuristic: more high/critical risks => more imbalanced
-    const score =
-      risks.filter((r) => r.riskLevel === RiskLevel.CRITICAL).length * 0.15 +
-      risks.filter((r) => r.riskLevel === RiskLevel.HIGH).length * 0.1;
+    // Simple heuristic: count one-sided vs balanced clauses
+    // Returns a score from -10 (heavily favors other party) to +10 (heavily favors user)
+    let score = 0;
 
-    // Clamp 0..1, where 0.5 is balanced, <0.5 user disadvantaged, >0.5 user favored
-    const base = 0.5 - Math.min(score, 0.4);
-    return Math.max(0, Math.min(1, base));
+    for (const risk of risks) {
+      // Critical and high risks typically indicate one-sided terms
+      if (risk.riskLevel === RiskLevel.CRITICAL) {
+        score -= 3;
+      } else if (risk.riskLevel === RiskLevel.HIGH) {
+        score -= 2;
+      } else if (risk.riskLevel === RiskLevel.MEDIUM) {
+        score -= 1;
+      }
+    }
+
+    // Normalize to -10 to +10 range
+    return Math.max(-10, Math.min(10, score));
   }
 
-  private toRiskAnalysis(r: EnhancedRiskItem): RiskAnalysis {
+  private toRiskAnalysis(risk: EnhancedRiskItem): RiskAnalysis {
     return {
-      sentence: r.sentence,
-      riskCategory: r.riskCategory,
-      riskLevel: r.riskLevel,
-      riskType: r.clauseType,
-      description: r.description,
-      specificConcerns: r.concerns,
-      negotiationStrategies: r.strategies,
-      priorityScore: r.priority,
-      confidenceScore: r.confidence,
+      sentence: risk.sentence,
+      riskCategory: risk.riskCategory,
+      riskLevel: risk.riskLevel,
+      riskType: risk.clauseType,
+      description: risk.description,
+      specificConcerns: risk.concerns,
+      negotiationStrategies: risk.strategies,
+      priorityScore: risk.priority,
+      confidenceScore: risk.confidence,
       legalConcepts: [],
-      entities: r.entities ?? {},
-      mitigationStrategies: r.strategies,
+      entities: risk.entities || {},
+      mitigationStrategies: risk.strategies,
       alternativeLanguage: "",
       costImplications: "",
     };
