@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     # Change this to accept a comma-separated string of keys
     GEMINI_API_KEYS: str = Field("", alias="GEMINI_API_KEYS") 
     
-    LLM_MODEL: str = "gemini-1.5-flash"
+    LLM_MODEL: str = "gemini-2.5-flash"
     MAX_CHUNK_TOKENS: int = 1_000
 
     MAX_FILE_SIZE_MB: int = 10
